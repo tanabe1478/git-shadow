@@ -1,1 +1,5 @@
-// git-shadow status command
+use anyhow::Result;
+
+pub fn run() -> Result<()> {
+    todo!("status command not yet implemented")
+}

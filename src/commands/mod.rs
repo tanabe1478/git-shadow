@@ -1,9 +1,9 @@
-pub mod install;
 pub mod add;
-pub mod remove;
-pub mod status;
 pub mod diff;
-pub mod rebase;
-pub mod restore;
 pub mod doctor;
 pub mod hook;
+pub mod install;
+pub mod rebase;
+pub mod remove;
+pub mod restore;
+pub mod status;
