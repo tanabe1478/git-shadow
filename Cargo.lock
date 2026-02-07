@@ -304,6 +304,7 @@ dependencies = [
  "colored",
  "dialoguer",
  "is-terminal",
+ "libc",
  "predicates",
  "serde",
  "serde_json",
