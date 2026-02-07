@@ -287,7 +287,7 @@ mod tests {
     #[test]
     fn test_overlay_stashes_and_restores_baseline() {
         let (_dir, git) = make_test_repo();
-        let config = setup_overlay(&git);
+        let _config = setup_overlay(&git);
 
         handle(&git).unwrap();
 
