@@ -89,14 +89,15 @@ mod tests {
         let (_dir, git) = make_test_repo();
         let commit = git.head_commit().unwrap();
         let mut config = ShadowConfig::new();
-        config
-            .add_overlay("CLAUDE.md".to_string(), commit)
-            .unwrap();
+        config.add_overlay("CLAUDE.md".to_string(), commit).unwrap();
 
         // Save baseline
         let content = git.show_file("HEAD", "CLAUDE.md").unwrap();
-        fs_util::atomic_write(&git.shadow_dir.join("baselines").join("CLAUDE.md"), &content)
-            .unwrap();
+        fs_util::atomic_write(
+            &git.shadow_dir.join("baselines").join("CLAUDE.md"),
+            &content,
+        )
+        .unwrap();
 
         config.save(&git.shadow_dir).unwrap();
 
@@ -115,8 +116,11 @@ mod tests {
 
         // Save old baseline
         let content = git.show_file("HEAD", "CLAUDE.md").unwrap();
-        fs_util::atomic_write(&git.shadow_dir.join("baselines").join("CLAUDE.md"), &content)
-            .unwrap();
+        fs_util::atomic_write(
+            &git.shadow_dir.join("baselines").join("CLAUDE.md"),
+            &content,
+        )
+        .unwrap();
 
         config.save(&git.shadow_dir).unwrap();
 

@@ -23,32 +23,23 @@ pub fn run() -> Result<()> {
                 "  ⚠ stash に残留ファイルがあります（前回の commit が途中で中断された可能性があります）"
                     .yellow()
             );
-            println!(
-                "{}",
-                "    → git-shadow restore を実行してください".yellow()
-            );
+            println!("{}", "    → git-shadow restore を実行してください".yellow());
             println!();
         }
     }
 
     // Check for stale lock
-    match lock::check_lock(&git.shadow_dir)? {
-        LockStatus::Stale(info) => {
-            println!(
-                "{}",
-                format!(
-                    "  ⚠ lockfile が残っています（PID {} は既に終了しています）",
-                    info.pid
-                )
-                .yellow()
-            );
-            println!(
-                "{}",
-                "    → git-shadow restore を実行してください".yellow()
-            );
-            println!();
-        }
-        _ => {}
+    if let LockStatus::Stale(info) = lock::check_lock(&git.shadow_dir)? {
+        println!(
+            "{}",
+            format!(
+                "  ⚠ lockfile が残っています（PID {} は既に終了しています）",
+                info.pid
+            )
+            .yellow()
+        );
+        println!("{}", "    → git-shadow restore を実行してください".yellow());
+        println!();
     }
 
     if config.files.is_empty() {
@@ -75,7 +66,7 @@ pub fn run() -> Result<()> {
                 if !worktree_path.exists() {
                     println!(
                         "{}",
-                        format!("    ⚠ ファイルがワーキングツリーに存在しません").yellow()
+                        "    ⚠ ファイルがワーキングツリーに存在しません".yellow()
                     );
                 } else if baseline_path.exists() {
                     let baseline = std::fs::read_to_string(&baseline_path).unwrap_or_default();
@@ -125,10 +116,7 @@ pub fn run() -> Result<()> {
                     let metadata = std::fs::metadata(&worktree_path)?;
                     println!("    ファイルサイズ: {}", format_size(metadata.len()));
                 } else {
-                    println!(
-                        "{}",
-                        "    ⚠ ファイルが存在しません".yellow()
-                    );
+                    println!("{}", "    ⚠ ファイルが存在しません".yellow());
                 }
                 println!();
             }

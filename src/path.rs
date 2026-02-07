@@ -175,9 +175,6 @@ mod tests {
     #[test]
     fn test_normalize_strips_multiple_leading_dot_slash() {
         let repo = PathBuf::from("/repo");
-        assert_eq!(
-            normalize_path("././CLAUDE.md", &repo).unwrap(),
-            "CLAUDE.md"
-        );
+        assert_eq!(normalize_path("././CLAUDE.md", &repo).unwrap(), "CLAUDE.md");
     }
 }

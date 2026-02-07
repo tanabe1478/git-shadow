@@ -1,7 +1,10 @@
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "git-shadow", about = "Git リポジトリ内のローカル限定変更を管理する")]
+#[command(
+    name = "git-shadow",
+    about = "Git リポジトリ内のローカル限定変更を管理する"
+)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,

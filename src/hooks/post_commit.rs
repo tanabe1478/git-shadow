@@ -67,8 +67,7 @@ pub fn handle(git: &GitRepo) -> Result<()> {
         // Partial failure - keep lock
         eprintln!(
             "{}",
-            "⚠ 一部のファイルの復元に失敗しました。git-shadow restore を実行してください"
-                .yellow()
+            "⚠ 一部のファイルの復元に失敗しました。git-shadow restore を実行してください".yellow()
         );
         for f in &failed {
             eprintln!("  - {}", f);
@@ -153,11 +152,8 @@ mod tests {
         let (_dir, git) = make_test_repo();
 
         // Create phantom stash
-        fs_util::atomic_write(
-            &git.shadow_dir.join("stash").join("local.md"),
-            b"# Local\n",
-        )
-        .unwrap();
+        fs_util::atomic_write(&git.shadow_dir.join("stash").join("local.md"), b"# Local\n")
+            .unwrap();
         lock::acquire_lock(&git.shadow_dir).unwrap();
 
         handle(&git).unwrap();
@@ -207,8 +203,7 @@ mod tests {
 
         handle(&git).unwrap();
 
-        let content =
-            std::fs::read_to_string(git.root.join("src/components/CLAUDE.md")).unwrap();
+        let content = std::fs::read_to_string(git.root.join("src/components/CLAUDE.md")).unwrap();
         assert_eq!(content, "# Component\n");
     }
 }

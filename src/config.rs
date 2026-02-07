@@ -38,12 +38,18 @@ pub struct ShadowConfig {
     pub files: BTreeMap<String, FileEntry>,
 }
 
-impl ShadowConfig {
-    pub fn new() -> Self {
+impl Default for ShadowConfig {
+    fn default() -> Self {
         Self {
             version: 1,
             files: BTreeMap::new(),
         }
+    }
+}
+
+impl ShadowConfig {
+    pub fn new() -> Self {
+        Self::default()
     }
 
     pub fn load(shadow_dir: &Path) -> anyhow::Result<Self> {

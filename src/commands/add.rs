@@ -60,8 +60,7 @@ fn add_overlay(
     // Save baseline
     let encoded = path::encode_path(normalized);
     let baseline_path = git.shadow_dir.join("baselines").join(&encoded);
-    fs_util::atomic_write(&baseline_path, &baseline_content)
-        .context("ベースラインの保存に失敗")?;
+    fs_util::atomic_write(&baseline_path, &baseline_content).context("ベースラインの保存に失敗")?;
 
     // Add to config
     config.add_overlay(normalized.to_string(), commit)?;
@@ -69,7 +68,12 @@ fn add_overlay(
     println!(
         "{} を overlay として登録しました (ベースライン: {})",
         normalized,
-        &config.get(normalized).unwrap().baseline_commit.as_deref().unwrap_or("?")[..7]
+        &config
+            .get(normalized)
+            .unwrap()
+            .baseline_commit
+            .as_deref()
+            .unwrap_or("?")[..7]
     );
     Ok(())
 }

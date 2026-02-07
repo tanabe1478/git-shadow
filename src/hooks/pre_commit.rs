@@ -4,14 +4,14 @@ use colored::Colorize;
 use crate::config::{FileType, ShadowConfig};
 use crate::error::ShadowError;
 use crate::git::GitRepo;
-use crate::lock::{self, LockStatus};
+use crate::lock;
 use crate::{fs_util, path};
 
 /// Tracks stashed files for rollback capability
 struct PreCommitTransaction {
-    stashed_overlays: Vec<String>,  // normalized paths of overlay files stashed
-    stashed_phantoms: Vec<String>,  // normalized paths of phantom files stashed
-    overwritten: Vec<String>,       // overlay files where baseline was restored
+    stashed_overlays: Vec<String>, // normalized paths of overlay files stashed
+    stashed_phantoms: Vec<String>, // normalized paths of phantom files stashed
+    overwritten: Vec<String>,      // overlay files where baseline was restored
 }
 
 impl PreCommitTransaction {
@@ -156,7 +156,11 @@ fn detect_partial_staging(git: &GitRepo, config: &ShadowConfig) -> Result<()> {
     Ok(())
 }
 
-fn process_files(git: &GitRepo, config: &ShadowConfig, tx: &mut PreCommitTransaction) -> Result<()> {
+fn process_files(
+    git: &GitRepo,
+    config: &ShadowConfig,
+    tx: &mut PreCommitTransaction,
+) -> Result<()> {
     for (file_path, entry) in &config.files {
         match entry.file_type {
             FileType::Overlay => {
@@ -177,8 +181,8 @@ fn process_overlay(git: &GitRepo, file_path: &str, tx: &mut PreCommitTransaction
     let baseline_path = git.shadow_dir.join("baselines").join(&encoded);
 
     // a. Stash current content
-    let content = std::fs::read(&worktree_path)
-        .with_context(|| format!("{} の読み込みに失敗", file_path))?;
+    let content =
+        std::fs::read(&worktree_path).with_context(|| format!("{} の読み込みに失敗", file_path))?;
     fs_util::atomic_write(&stash_path, &content)
         .with_context(|| format!("{} の stash に失敗", file_path))?;
     tx.stashed_overlays.push(file_path.to_string());
@@ -222,6 +226,7 @@ fn process_phantom(git: &GitRepo, file_path: &str, tx: &mut PreCommitTransaction
 mod tests {
     use super::*;
     use crate::config::{ExcludeMode, ShadowConfig};
+    use crate::lock::LockStatus;
 
     fn make_test_repo() -> (tempfile::TempDir, GitRepo) {
         let dir = tempfile::tempdir().unwrap();
@@ -296,7 +301,8 @@ mod tests {
         assert_eq!(wt, "# Team\n");
 
         // Stash should have shadow content
-        let stash = std::fs::read_to_string(git.shadow_dir.join("stash").join("CLAUDE.md")).unwrap();
+        let stash =
+            std::fs::read_to_string(git.shadow_dir.join("stash").join("CLAUDE.md")).unwrap();
         assert_eq!(stash, "# Team\n# My additions\n");
 
         // Cleanup for test
@@ -310,7 +316,9 @@ mod tests {
 
         // Create phantom file
         std::fs::write(git.root.join("local.md"), "# Local\n").unwrap();
-        config.add_phantom("local.md".to_string(), ExcludeMode::None).unwrap();
+        config
+            .add_phantom("local.md".to_string(), ExcludeMode::None)
+            .unwrap();
         config.save(&git.shadow_dir).unwrap();
 
         // Stage it (simulating accidental git add)

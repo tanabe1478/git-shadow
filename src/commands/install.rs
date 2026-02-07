@@ -32,8 +32,7 @@ pub fn run() -> Result<()> {
     let shadow_dir = &git.shadow_dir;
     std::fs::create_dir_all(shadow_dir.join("baselines"))
         .context(".git/shadow/baselines/ の作成に失敗")?;
-    std::fs::create_dir_all(shadow_dir.join("stash"))
-        .context(".git/shadow/stash/ の作成に失敗")?;
+    std::fs::create_dir_all(shadow_dir.join("stash")).context(".git/shadow/stash/ の作成に失敗")?;
 
     let hooks_dir = git.git_dir.join("hooks");
     std::fs::create_dir_all(&hooks_dir).context("hooks ディレクトリの作成に失敗")?;
@@ -156,11 +155,7 @@ mod tests {
         for name in HOOK_NAMES {
             let hook = git.git_dir.join("hooks").join(name);
             let perms = std::fs::metadata(&hook).unwrap().permissions();
-            assert!(
-                perms.mode() & 0o111 != 0,
-                "{} should be executable",
-                name
-            );
+            assert!(perms.mode() & 0o111 != 0, "{} should be executable", name);
         }
     }
 
