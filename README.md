@@ -1,5 +1,7 @@
 # git-shadow
 
+> **[日本語版はこちら (Japanese)](README.ja.md)**
+
 A CLI tool for managing **local-only changes** in Git repositories. Your edits stay active in the working tree during development, but are automatically stripped before each commit — keeping Git history clean.
 
 ## Why?
@@ -70,7 +72,7 @@ All data is stored in `.git/shadow/` — inside `.git/`, so it's never committed
 
 ## Documentation
 
-- [Detailed Usage Guide](docs/usage.md)
+- [Detailed Usage Guide](docs/usage.md) | [日本語](docs/usage.ja.md)
 - [Requirements Specification (Japanese)](docs/requirements.md)
 
 ## Requirements

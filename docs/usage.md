@@ -1,5 +1,7 @@
 # git-shadow Usage Guide
 
+> **[日本語版はこちら (Japanese)](usage.ja.md)**
+
 ## Installation
 
 ```bash
