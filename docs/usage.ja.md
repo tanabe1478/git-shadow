@@ -107,8 +107,7 @@ overlay をかけているファイルがチームによって更新された場
 
 ```bash
 # post-merge hook が警告を表示:
-# "⚠ CLAUDE.md のベースラインが古くなっています。
-#   git-shadow rebase CLAUDE.md を実行してください"
+# "warning: baseline for CLAUDE.md is outdated. Run `git-shadow rebase CLAUDE.md`"
 
 # ベースラインを更新し shadow 変更を再適用
 git-shadow rebase CLAUDE.md
@@ -133,7 +132,8 @@ git-shadow rebase
 コミットが中断された場合（エディタを閉じた、commit-msg hook の失敗など）、shadow 変更は退避されたまま復元されません。次回の git-shadow コマンド実行時に検出されます:
 
 ```
-⚠ stash に残留ファイルがあります。git-shadow restore を実行してください
+warning: stash has remaining files (a previous commit may have been interrupted)
+  -> Run `git-shadow restore`
 ```
 
 ### 手動リカバリ

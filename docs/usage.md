@@ -107,7 +107,7 @@ When the team updates a file you have an overlay on (e.g., after `git pull`):
 
 ```bash
 # post-merge hook will warn you:
-# "⚠ CLAUDE.md baseline is outdated. Run: git-shadow rebase CLAUDE.md"
+# "warning: baseline for CLAUDE.md is outdated. Run `git-shadow rebase CLAUDE.md`"
 
 # Update your baseline and re-apply shadow changes
 git-shadow rebase CLAUDE.md
@@ -132,7 +132,8 @@ git-shadow rebase
 If a commit is interrupted (e.g., commit message editor closed, commit-msg hook failed), shadow changes are stashed but not restored. The next git-shadow command will detect this and prompt you:
 
 ```
-⚠ stash remnants found. Run: git-shadow restore
+warning: stash has remaining files (a previous commit may have been interrupted)
+  -> Run `git-shadow restore`
 ```
 
 ### Manual Recovery
