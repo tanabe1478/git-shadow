@@ -18,7 +18,7 @@ impl GitRepo {
             .args(["rev-parse", "--show-toplevel"])
             .current_dir(start)
             .output()
-            .context("git コマンドの実行に失敗")?;
+            .context("failed to run git command")?;
 
         if !output.status.success() {
             return Err(ShadowError::NotAGitRepo.into());
@@ -48,11 +48,11 @@ impl GitRepo {
             .args(["show", &spec])
             .current_dir(&self.root)
             .output()
-            .context("git show の実行に失敗")?;
+            .context("failed to run git show")?;
 
         if !output.status.success() {
             bail!(
-                "git show {} 失敗: {}",
+                "git show {} failed: {}",
                 spec,
                 String::from_utf8_lossy(&output.stderr)
             );
@@ -67,7 +67,7 @@ impl GitRepo {
             .args(["ls-files", "--error-unmatch", path])
             .current_dir(&self.root)
             .output()
-            .context("git ls-files の実行に失敗")?;
+            .context("failed to run git ls-files")?;
 
         Ok(output.status.success())
     }
@@ -79,7 +79,7 @@ impl GitRepo {
             .args(["status", "--porcelain=v2", "--", path])
             .current_dir(&self.root)
             .output()
-            .context("git status の実行に失敗")?;
+            .context("failed to run git status")?;
 
         let stdout = String::from_utf8_lossy(&output.stdout);
 

@@ -133,7 +133,7 @@ fn run_soft_checks(git: &GitRepo, config: &ShadowConfig) {
                     eprintln!(
                         "{}",
                         format!(
-                            "⚠ {} のベースラインが古くなっています。git-shadow rebase {} を実行してください",
+                            "warning: baseline for {} is outdated. Run `git-shadow rebase {}`",
                             file_path, file_path
                         )
                         .yellow()
@@ -182,22 +182,22 @@ fn process_overlay(git: &GitRepo, file_path: &str, tx: &mut PreCommitTransaction
 
     // a. Stash current content
     let content =
-        std::fs::read(&worktree_path).with_context(|| format!("{} の読み込みに失敗", file_path))?;
+        std::fs::read(&worktree_path).with_context(|| format!("failed to read {}", file_path))?;
     fs_util::atomic_write(&stash_path, &content)
-        .with_context(|| format!("{} の stash に失敗", file_path))?;
+        .with_context(|| format!("failed to stash {}", file_path))?;
     tx.stashed_overlays.push(file_path.to_string());
 
     // b. Restore baseline
     let baseline = std::fs::read(&baseline_path)
-        .with_context(|| format!("{} のベースライン読み込みに失敗", file_path))?;
+        .with_context(|| format!("failed to read baseline for {}", file_path))?;
     std::fs::write(&worktree_path, &baseline)
-        .with_context(|| format!("{} へのベースライン復元に失敗", file_path))?;
+        .with_context(|| format!("failed to restore baseline for {}", file_path))?;
     tx.overwritten.push(file_path.to_string());
 
     // c. Stage the baseline content
     git.add(file_path)
         .map_err(|e| anyhow::anyhow!("{}", e))
-        .with_context(|| format!("{} のステージに失敗", file_path))?;
+        .with_context(|| format!("failed to stage {}", file_path))?;
 
     Ok(())
 }
@@ -210,9 +210,9 @@ fn process_phantom(git: &GitRepo, file_path: &str, tx: &mut PreCommitTransaction
     // a. Stash current content (if file exists)
     if worktree_path.exists() {
         let content = std::fs::read(&worktree_path)
-            .with_context(|| format!("{} の読み込みに失敗", file_path))?;
+            .with_context(|| format!("failed to read {}", file_path))?;
         fs_util::atomic_write(&stash_path, &content)
-            .with_context(|| format!("{} の stash に失敗", file_path))?;
+            .with_context(|| format!("failed to stash {}", file_path))?;
         tx.stashed_phantoms.push(file_path.to_string());
     }
 
@@ -354,7 +354,7 @@ mod tests {
         let result = handle(&git);
         assert!(result.is_err());
         let err_msg = format!("{}", result.unwrap_err());
-        assert!(err_msg.contains("部分ステージ"));
+        assert!(err_msg.contains("partial staging"));
     }
 
     #[test]
@@ -393,7 +393,7 @@ mod tests {
         let result = handle(&git);
         assert!(result.is_err());
         let err_msg = format!("{}", result.unwrap_err());
-        assert!(err_msg.contains("ワーキングツリーに存在しません"));
+        assert!(err_msg.contains("does not exist in the working tree"));
     }
 
     #[test]
@@ -408,7 +408,7 @@ mod tests {
         let result = handle(&git);
         assert!(result.is_err());
         let err_msg = format!("{}", result.unwrap_err());
-        assert!(err_msg.contains("ベースライン"));
+        assert!(err_msg.contains("baseline missing"));
     }
 
     #[test]

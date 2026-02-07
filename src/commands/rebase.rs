@@ -13,7 +13,7 @@ pub fn run(file: Option<&str>) -> Result<()> {
     let head = git.head_commit()?;
 
     if config.files.is_empty() {
-        println!("管理対象ファイルはありません");
+        println!("no managed files");
         return Ok(());
     }
 
@@ -40,9 +40,9 @@ pub fn run(file: Option<&str>) -> Result<()> {
 
     if !found {
         if let Some(target) = file {
-            bail!("{} は overlay として管理されていません", target);
+            bail!("{} is not managed as overlay", target);
         } else {
-            println!("overlay ファイルがありません");
+            println!("no overlay files found");
         }
     }
 
@@ -72,7 +72,7 @@ fn rebase_file(
         Ok(content) => String::from_utf8_lossy(&content).to_string(),
         Err(_) => {
             bail!(
-                "{} が HEAD に存在しません。ファイルが削除された可能性があります",
+                "{} does not exist in HEAD. The file may have been deleted",
                 file_path
             );
         }
@@ -80,7 +80,7 @@ fn rebase_file(
 
     // Check if baseline actually changed
     if old_baseline == new_baseline {
-        println!("{}: ベースラインに変更はありません", file_path);
+        println!("{}: baseline has not changed", file_path);
         return Ok(());
     }
 
@@ -107,16 +107,13 @@ fn rebase_file(
         eprintln!(
             "{}",
             format!(
-                "⚠ {} にコンフリクトが発生しました。手動で解決してください",
+                "warning: conflicts detected in {}. Please resolve manually",
                 file_path
             )
             .yellow()
         );
     } else {
-        println!(
-            "{}",
-            format!("{} のベースラインを更新しました", file_path).green()
-        );
+        println!("{}", format!("baseline updated for {}", file_path).green());
     }
 
     Ok(())

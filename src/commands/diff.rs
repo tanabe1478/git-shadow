@@ -10,7 +10,7 @@ pub fn run(file: Option<&str>) -> Result<()> {
     let config = ShadowConfig::load(&git.shadow_dir)?;
 
     if config.files.is_empty() {
-        println!("管理対象ファイルはありません");
+        println!("no managed files");
         return Ok(());
     }
 
@@ -37,7 +37,7 @@ pub fn run(file: Option<&str>) -> Result<()> {
 
     if !found {
         if let Some(target) = file {
-            println!("{} は shadow 管理対象ではありません", target);
+            println!("{} is not managed by git-shadow", target);
         }
     }
 
@@ -53,7 +53,7 @@ fn show_overlay_diff(git: &GitRepo, file_path: &str) -> Result<()> {
     let current = std::fs::read_to_string(&worktree_path).unwrap_or_default();
 
     if baseline == current {
-        println!("{}: shadow 変更なし", file_path);
+        println!("{}: no shadow changes", file_path);
         return Ok(());
     }
 
@@ -71,7 +71,7 @@ fn show_phantom_diff(git: &GitRepo, file_path: &str) -> Result<()> {
     let worktree_path = git.root.join(file_path);
 
     if !worktree_path.exists() {
-        println!("{}: ファイルが存在しません", file_path);
+        println!("{}: file does not exist", file_path);
         return Ok(());
     }
 

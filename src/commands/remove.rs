@@ -14,25 +14,25 @@ pub fn run(file: &str, force: bool) -> Result<()> {
 
     let entry = config
         .get(&normalized)
-        .ok_or_else(|| anyhow::anyhow!("{} は shadow 管理対象ではありません", normalized))?
+        .ok_or_else(|| anyhow::anyhow!("{} is not managed by git-shadow", normalized))?
         .clone();
 
     // Confirmation prompt
     if !force {
         if !std::io::stdin().is_terminal() {
-            bail!("非対話環境では --force が必要です");
+            bail!("--force is required in non-interactive mode");
         }
 
         let prompt = match entry.file_type {
             FileType::Overlay => {
                 format!(
-                    "{} の shadow 変更が破棄されます。続行しますか？ [y/N]",
+                    "Shadow changes for {} will be discarded. Continue? [y/N]",
                     normalized
                 )
             }
             FileType::Phantom => {
                 format!(
-                    "{} を shadow 管理から解除します。ファイル自体は残ります。続行しますか？ [y/N]",
+                    "{} will be unregistered from shadow management. The file itself will remain. Continue? [y/N]",
                     normalized
                 )
             }
@@ -43,7 +43,7 @@ pub fn run(file: &str, force: bool) -> Result<()> {
         std::io::stdin().read_line(&mut input)?;
         let input = input.trim().to_lowercase();
         if input != "y" && input != "yes" {
-            println!("中止しました");
+            println!("aborted");
             return Ok(());
         }
     }
@@ -62,7 +62,7 @@ pub fn run(file: &str, force: bool) -> Result<()> {
 
     println!(
         "{}",
-        format!("{} を shadow 管理から解除しました", normalized).green()
+        format!("unregistered {} from shadow management", normalized).green()
     );
 
     Ok(())

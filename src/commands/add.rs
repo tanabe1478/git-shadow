@@ -15,8 +15,7 @@ pub fn run(file: &str, phantom: bool, no_exclude: bool, force: bool) -> Result<(
     if !git.hooks_installed() {
         eprintln!(
             "{}",
-            "⚠ hooks がインストールされていません。`git-shadow install` を実行してください"
-                .yellow()
+            "warning: hooks not installed. Run `git-shadow install`".yellow()
         );
     }
 
@@ -60,13 +59,13 @@ fn add_overlay(
     // Save baseline
     let encoded = path::encode_path(normalized);
     let baseline_path = git.shadow_dir.join("baselines").join(&encoded);
-    fs_util::atomic_write(&baseline_path, &baseline_content).context("ベースラインの保存に失敗")?;
+    fs_util::atomic_write(&baseline_path, &baseline_content).context("failed to save baseline")?;
 
     // Add to config
     config.add_overlay(normalized.to_string(), commit)?;
 
     println!(
-        "{} を overlay として登録しました (ベースライン: {})",
+        "registered {} as overlay (baseline: {})",
         normalized,
         &config
             .get(normalized)
@@ -87,7 +86,7 @@ fn add_phantom(
     // Phantom files should NOT be tracked
     if git.is_tracked(normalized)? {
         return Err(anyhow::anyhow!(
-            "ファイル '{}' は既に Git で追跡されています。overlay として登録するには --phantom を外してください",
+            "file '{}' is already tracked by Git. Remove --phantom to register as overlay",
             normalized
         ));
     }
@@ -99,13 +98,13 @@ fn add_phantom(
         let manager = ExcludeManager::new(&git.git_dir);
         manager
             .add_entry(normalized)
-            .context(".git/info/exclude への追加に失敗")?;
+            .context("failed to add to .git/info/exclude")?;
         ExcludeMode::GitInfoExclude
     };
 
     config.add_phantom(normalized.to_string(), exclude_mode)?;
 
-    println!("{} を phantom として登録しました", normalized);
+    println!("registered {} as phantom", normalized);
     Ok(())
 }
 

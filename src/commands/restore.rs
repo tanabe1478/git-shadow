@@ -52,16 +52,16 @@ pub fn run(file: Option<&str>) -> Result<()> {
 
     // Print summary
     if restored.is_empty() && !lock_removed {
-        println!("復旧するものはありません");
+        println!("nothing to restore");
     } else {
         if !restored.is_empty() {
-            println!("復元されたファイル:");
+            println!("restored files:");
             for f in &restored {
                 println!("  {}", f);
             }
         }
         if lock_removed {
-            println!("lockfile を削除しました");
+            println!("lockfile removed");
         }
     }
 

@@ -58,17 +58,17 @@ impl ShadowConfig {
             return Ok(Self::new());
         }
         let content =
-            std::fs::read_to_string(&config_path).context("config.json の読み込みに失敗")?;
-        let config: Self = serde_json::from_str(&content).context("config.json のパースに失敗")?;
+            std::fs::read_to_string(&config_path).context("failed to read config.json")?;
+        let config: Self = serde_json::from_str(&content).context("failed to parse config.json")?;
         Ok(config)
     }
 
     pub fn save(&self, shadow_dir: &Path) -> anyhow::Result<()> {
         let config_path = shadow_dir.join("config.json");
         let content =
-            serde_json::to_string_pretty(self).context("config.json のシリアライズに失敗")?;
+            serde_json::to_string_pretty(self).context("failed to serialize config.json")?;
         fs_util::atomic_write(&config_path, content.as_bytes())
-            .context("config.json の書き込みに失敗")?;
+            .context("failed to write config.json")?;
         Ok(())
     }
 

@@ -17,7 +17,7 @@ pub fn normalize_path(input: &str, repo_root: &Path) -> Result<String> {
             stripped.trim_start_matches('/').to_string()
         } else {
             bail!(
-                "パス '{}' はリポジトリ '{}' 内にありません",
+                "path '{}' is not inside repository '{}'",
                 input,
                 repo_root.display()
             );

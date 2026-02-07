@@ -26,7 +26,7 @@ pub fn check_lock(shadow_dir: &Path) -> anyhow::Result<LockStatus> {
         return Ok(LockStatus::Free);
     }
 
-    let content = std::fs::read_to_string(&lock_path).context("lockfile の読み込みに失敗")?;
+    let content = std::fs::read_to_string(&lock_path).context("failed to read lockfile")?;
     let info = parse_lock(&content)?;
 
     let my_pid = std::process::id();
@@ -76,7 +76,7 @@ pub fn acquire_lock(shadow_dir: &Path) -> Result<(), ShadowError> {
 pub fn release_lock(shadow_dir: &Path) -> anyhow::Result<()> {
     let lock_path = shadow_dir.join("lock");
     if lock_path.exists() {
-        std::fs::remove_file(&lock_path).context("lockfile の削除に失敗")?;
+        std::fs::remove_file(&lock_path).context("failed to remove lockfile")?;
     }
     Ok(())
 }
@@ -93,19 +93,19 @@ fn parse_lock(content: &str) -> anyhow::Result<LockInfo> {
 
     for line in content.lines() {
         if let Some(val) = line.strip_prefix("pid=") {
-            pid = Some(val.parse().context("PID のパースに失敗")?);
+            pid = Some(val.parse().context("failed to parse PID")?);
         } else if let Some(val) = line.strip_prefix("timestamp=") {
             timestamp = Some(
                 DateTime::parse_from_rfc3339(val)
-                    .context("タイムスタンプのパースに失敗")?
+                    .context("failed to parse timestamp")?
                     .with_timezone(&Utc),
             );
         }
     }
 
     Ok(LockInfo {
-        pid: pid.context("lockfile に pid がありません")?,
-        timestamp: timestamp.context("lockfile に timestamp がありません")?,
+        pid: pid.context("lockfile missing pid field")?,
+        timestamp: timestamp.context("lockfile missing timestamp field")?,
     })
 }
 

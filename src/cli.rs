@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand};
 #[derive(Parser)]
 #[command(
     name = "git-shadow",
-    about = "Git リポジトリ内のローカル限定変更を管理する"
+    about = "Manage local-only changes in Git repositories"
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -12,61 +12,61 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Git hooks をセットアップする
+    /// Set up Git hooks
     Install,
 
-    /// ファイルを shadow 管理に登録する
+    /// Register a file for shadow management
     Add {
-        /// 対象ファイルパス
+        /// Target file path
         file: String,
-        /// phantom (新規ローカルファイル) として登録
+        /// Register as a phantom (local-only file)
         #[arg(long)]
         phantom: bool,
-        /// .git/info/exclude への追加をスキップ (phantom のみ)
+        /// Skip adding to .git/info/exclude (phantom only)
         #[arg(long)]
         no_exclude: bool,
-        /// サイズ上限を無視
+        /// Ignore file size limit
         #[arg(long)]
         force: bool,
     },
 
-    /// ファイルを shadow 管理から解除する
+    /// Unregister a file from shadow management
     Remove {
-        /// 対象ファイルパス
+        /// Target file path
         file: String,
-        /// 確認プロンプトをスキップ
+        /// Skip confirmation prompt
         #[arg(long)]
         force: bool,
     },
 
-    /// 管理対象ファイルの一覧と状態を表示する
+    /// Show managed files and their status
     Status,
 
-    /// shadow 変更の差分を表示する
+    /// Show shadow changes as a diff
     Diff {
-        /// 対象ファイルパス (省略時: 全ファイル)
+        /// Target file path (omit for all files)
         file: Option<String>,
     },
 
-    /// ベースラインを更新し shadow 変更を再適用する
+    /// Update baseline and re-apply shadow changes
     Rebase {
-        /// 対象ファイルパス (省略時: 全ファイル)
+        /// Target file path (omit for all files)
         file: Option<String>,
     },
 
-    /// 異常状態からの復旧を行う
+    /// Recover from abnormal state
     Restore {
-        /// 対象ファイルパス (省略時: 全ファイル)
+        /// Target file path (omit for all files)
         file: Option<String>,
     },
 
-    /// hooks と設定の状態を診断する
+    /// Diagnose hooks and configuration
     Doctor,
 
-    /// hook から呼び出される内部サブコマンド
+    /// Internal subcommand called from hooks
     #[command(hide = true)]
     Hook {
-        /// hook 名 (pre-commit, post-commit, post-merge)
+        /// Hook name (pre-commit, post-commit, post-merge)
         hook_name: String,
     },
 }

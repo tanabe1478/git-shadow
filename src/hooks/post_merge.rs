@@ -28,7 +28,7 @@ pub fn handle(git: &GitRepo) -> Result<()> {
                         eprintln!(
                             "{}",
                             format!(
-                                "⚠ {} のベースラインが古くなっています。\n  git-shadow rebase {} を実行してください",
+                                "warning: baseline for {} is outdated.\n  Run `git-shadow rebase {}`",
                                 file_path, file_path
                             )
                             .yellow()

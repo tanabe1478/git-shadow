@@ -16,7 +16,7 @@ if [ $SHADOW_EXIT -ne 0 ]; then
   exit $SHADOW_EXIT
 fi
 
-# 既存 hook のチェーン実行
+# Chain to existing hook
 if [ -x .git/hooks/{hook_name}.pre-shadow ]; then
   .git/hooks/{hook_name}.pre-shadow "$@"
 fi
@@ -31,11 +31,12 @@ pub fn run() -> Result<()> {
     // Create shadow directory structure
     let shadow_dir = &git.shadow_dir;
     std::fs::create_dir_all(shadow_dir.join("baselines"))
-        .context(".git/shadow/baselines/ の作成に失敗")?;
-    std::fs::create_dir_all(shadow_dir.join("stash")).context(".git/shadow/stash/ の作成に失敗")?;
+        .context("failed to create .git/shadow/baselines/")?;
+    std::fs::create_dir_all(shadow_dir.join("stash"))
+        .context("failed to create .git/shadow/stash/")?;
 
     let hooks_dir = git.git_dir.join("hooks");
-    std::fs::create_dir_all(&hooks_dir).context("hooks ディレクトリの作成に失敗")?;
+    std::fs::create_dir_all(&hooks_dir).context("failed to create hooks directory")?;
 
     for hook_name in HOOK_NAMES {
         let hook_path = hooks_dir.join(hook_name);
@@ -50,12 +51,12 @@ pub fn run() -> Result<()> {
             // Existing hook from another tool - back it up
             let backup = hooks_dir.join(format!("{}.pre-shadow", hook_name));
             std::fs::rename(&hook_path, &backup)
-                .with_context(|| format!("{} のバックアップに失敗", hook_name))?;
+                .with_context(|| format!("failed to back up {}", hook_name))?;
         }
 
         let script = generate_hook_script(hook_name);
         std::fs::write(&hook_path, &script)
-            .with_context(|| format!("{} の書き込みに失敗", hook_name))?;
+            .with_context(|| format!("failed to write {}", hook_name))?;
 
         // Set executable permission
         let mut perms = std::fs::metadata(&hook_path)?.permissions();
@@ -63,7 +64,7 @@ pub fn run() -> Result<()> {
         std::fs::set_permissions(&hook_path, perms)?;
     }
 
-    println!("git-shadow hooks をインストールしました");
+    println!("git-shadow hooks installed successfully");
     Ok(())
 }
 

@@ -33,16 +33,16 @@ pub fn run() -> Result<()> {
 
     // Print results
     if issues.is_empty() && warnings.is_empty() {
-        println!("{}", "すべて正常です".green());
+        println!("{}", "all checks passed".green());
     } else {
         if !issues.is_empty() {
-            println!("{}", "問題:".red());
+            println!("{}", "issues:".red());
             for issue in &issues {
                 println!("  {} {}", "✗".red(), issue);
             }
         }
         if !warnings.is_empty() {
-            println!("{}", "警告:".yellow());
+            println!("{}", "warnings:".yellow());
             for warning in &warnings {
                 println!("  {} {}", "⚠".yellow(), warning);
             }
@@ -57,7 +57,7 @@ fn check_hooks(git: &GitRepo, issues: &mut Vec<String>, warnings: &mut Vec<Strin
         let hook_path = git.git_dir.join("hooks").join(hook_name);
 
         if !hook_path.exists() {
-            issues.push(format!("{} hook が存在しません", hook_name));
+            issues.push(format!("{} hook does not exist", hook_name));
             continue;
         }
 
@@ -67,7 +67,7 @@ fn check_hooks(git: &GitRepo, issues: &mut Vec<String>, warnings: &mut Vec<Strin
             use std::os::unix::fs::PermissionsExt;
             if let Ok(metadata) = std::fs::metadata(&hook_path) {
                 if metadata.permissions().mode() & 0o111 == 0 {
-                    issues.push(format!("{} hook に実行権限がありません", hook_name));
+                    issues.push(format!("{} hook is not executable", hook_name));
                 }
             }
         }
@@ -75,10 +75,7 @@ fn check_hooks(git: &GitRepo, issues: &mut Vec<String>, warnings: &mut Vec<Strin
         // Check content calls git-shadow
         if let Ok(content) = std::fs::read_to_string(&hook_path) {
             if !content.contains("git-shadow hook") && !content.contains("git shadow hook") {
-                warnings.push(format!(
-                    "{} hook が git-shadow を呼び出していません",
-                    hook_name
-                ));
+                warnings.push(format!("{} hook does not call git-shadow", hook_name));
             }
         }
     }
@@ -87,10 +84,7 @@ fn check_hooks(git: &GitRepo, issues: &mut Vec<String>, warnings: &mut Vec<Strin
 fn check_competing_hooks(git: &GitRepo, warnings: &mut Vec<String>) {
     for marker in COMPETING_HOOKS {
         if git.root.join(marker).exists() {
-            warnings.push(format!(
-                "競合する hook マネージャーが検出されました: {}",
-                marker
-            ));
+            warnings.push(format!("competing hook manager detected: {}", marker));
         }
     }
 }
@@ -101,23 +95,20 @@ fn check_config_integrity(git: &GitRepo, config: &ShadowConfig, issues: &mut Vec
             FileType::Overlay => {
                 let worktree_path = git.root.join(file_path);
                 if !worktree_path.exists() {
-                    issues.push(format!("{} がワーキングツリーに存在しません", file_path));
+                    issues.push(format!("{} does not exist in working tree", file_path));
                 }
 
                 let encoded = path::encode_path(file_path);
                 let baseline_path = git.shadow_dir.join("baselines").join(&encoded);
                 if !baseline_path.exists() {
-                    issues.push(format!(
-                        "{} のベースラインファイルが存在しません",
-                        file_path
-                    ));
+                    issues.push(format!("baseline file for {} does not exist", file_path));
                 }
             }
             FileType::Phantom => {
                 let worktree_path = git.root.join(file_path);
                 if !worktree_path.exists() {
                     issues.push(format!(
-                        "{} (phantom) がワーキングツリーに存在しません",
+                        "{} (phantom) does not exist in working tree",
                         file_path
                     ));
                 }
@@ -139,9 +130,7 @@ fn check_stash(git: &GitRepo, warnings: &mut Vec<String>) {
             .unwrap_or(false);
 
         if has_files {
-            warnings.push(
-                "stash に残留ファイルがあります。git-shadow restore を実行してください".to_string(),
-            );
+            warnings.push("stash has remaining files. Run `git-shadow restore`".to_string());
         }
     }
 }
@@ -151,13 +140,13 @@ fn check_lock(git: &GitRepo, warnings: &mut Vec<String>) {
         match status {
             LockStatus::Stale(info) => {
                 warnings.push(format!(
-                    "stale lockfile が残っています (PID {})。git-shadow restore を実行してください",
+                    "stale lockfile detected (PID {}). Run `git-shadow restore`",
                     info.pid
                 ));
             }
             LockStatus::HeldByOther(info) => {
                 warnings.push(format!(
-                    "lockfile が別プロセス (PID {}) に保持されています",
+                    "lockfile is held by another process (PID {})",
                     info.pid
                 ));
             }
@@ -262,7 +251,9 @@ mod tests {
         super::check_competing_hooks(&git, &mut warnings);
 
         assert!(!warnings.is_empty());
-        assert!(warnings.iter().any(|w| w.contains("競合する hook")));
+        assert!(warnings
+            .iter()
+            .any(|w| w.contains("competing hook manager")));
     }
 
     #[test]
@@ -289,7 +280,7 @@ mod tests {
 
         assert!(issues
             .iter()
-            .any(|i| i.contains("ワーキングツリーに存在しません")));
+            .any(|i| i.contains("does not exist in working tree")));
     }
 
     #[test]
@@ -305,9 +296,7 @@ mod tests {
         let mut issues = Vec::new();
         super::check_config_integrity(&git, &config, &mut issues);
 
-        assert!(issues
-            .iter()
-            .any(|i| i.contains("ベースラインファイルが存在しません")));
+        assert!(issues.iter().any(|i| i.contains("baseline file for")));
     }
 
     #[test]

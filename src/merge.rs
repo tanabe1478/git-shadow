@@ -26,15 +26,15 @@ pub fn three_way_merge(
     let base_file = tempfile::Builder::new()
         .prefix("shadow-base-")
         .tempfile_in(work_dir)
-        .context("一時ファイルの作成に失敗")?;
+        .context("failed to create temp file")?;
     let ours_file = tempfile::Builder::new()
         .prefix("shadow-ours-")
         .tempfile_in(work_dir)
-        .context("一時ファイルの作成に失敗")?;
+        .context("failed to create temp file")?;
     let theirs_file = tempfile::Builder::new()
         .prefix("shadow-theirs-")
         .tempfile_in(work_dir)
-        .context("一時ファイルの作成に失敗")?;
+        .context("failed to create temp file")?;
 
     std::fs::write(base_file.path(), base)?;
     std::fs::write(ours_file.path(), ours)?;
@@ -54,7 +54,7 @@ pub fn three_way_merge(
         .arg(base_file.path())
         .arg(theirs_file.path())
         .output()
-        .context("git merge-file の実行に失敗")?;
+        .context("failed to run git merge-file")?;
 
     let content = String::from_utf8_lossy(&output.stdout).to_string();
     let has_conflicts = output.status.code().unwrap_or(-1) > 0;

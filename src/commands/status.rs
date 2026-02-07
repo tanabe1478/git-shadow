@@ -20,10 +20,10 @@ pub fn run() -> Result<()> {
         if !stash_files.is_empty() {
             println!(
                 "{}",
-                "  ⚠ stash に残留ファイルがあります（前回の commit が途中で中断された可能性があります）"
+                "  warning: stash has remaining files (a previous commit may have been interrupted)"
                     .yellow()
             );
-            println!("{}", "    → git-shadow restore を実行してください".yellow());
+            println!("{}", "    -> Run `git-shadow restore`".yellow());
             println!();
         }
     }
@@ -33,21 +33,21 @@ pub fn run() -> Result<()> {
         println!(
             "{}",
             format!(
-                "  ⚠ lockfile が残っています（PID {} は既に終了しています）",
+                "  warning: stale lockfile detected (PID {} no longer exists)",
                 info.pid
             )
             .yellow()
         );
-        println!("{}", "    → git-shadow restore を実行してください".yellow());
+        println!("{}", "    -> Run `git-shadow restore`".yellow());
         println!();
     }
 
     if config.files.is_empty() {
-        println!("管理対象ファイルはありません");
+        println!("no managed files");
         return Ok(());
     }
 
-    println!("管理対象ファイル:");
+    println!("managed files:");
     println!();
 
     for (file_path, entry) in &config.files {
@@ -55,7 +55,7 @@ pub fn run() -> Result<()> {
             FileType::Overlay => {
                 println!("  {} (overlay)", file_path);
                 if let Some(ref commit) = entry.baseline_commit {
-                    println!("    ベースライン: {}", &commit[..7.min(commit.len())]);
+                    println!("    baseline: {}", &commit[..7.min(commit.len())]);
                 }
 
                 // Show diff stats
@@ -66,13 +66,13 @@ pub fn run() -> Result<()> {
                 if !worktree_path.exists() {
                     println!(
                         "{}",
-                        "    ⚠ ファイルがワーキングツリーに存在しません".yellow()
+                        "    warning: file does not exist in working tree".yellow()
                     );
                 } else if baseline_path.exists() {
                     let baseline = std::fs::read_to_string(&baseline_path).unwrap_or_default();
                     let current = std::fs::read_to_string(&worktree_path).unwrap_or_default();
                     let (added, removed) = diff_stats(&baseline, &current);
-                    println!("    shadow変更: +{} 行 / -{} 行", added, removed);
+                    println!("    shadow changes: +{} lines / -{} lines", added, removed);
 
                     // Check baseline drift
                     if let Some(ref commit) = entry.baseline_commit {
@@ -81,7 +81,7 @@ pub fn run() -> Result<()> {
                                 println!(
                                     "{}",
                                     format!(
-                                        "    ⚠ ベースラインが古くなっています ({} → {})",
+                                        "    warning: baseline is outdated ({} -> {})",
                                         &commit[..7.min(commit.len())],
                                         &head[..7.min(head.len())]
                                     )
@@ -89,11 +89,8 @@ pub fn run() -> Result<()> {
                                 );
                                 println!(
                                     "{}",
-                                    format!(
-                                        "    → git-shadow rebase {} を実行してください",
-                                        file_path
-                                    )
-                                    .yellow()
+                                    format!("    -> Run `git-shadow rebase {}`", file_path)
+                                        .yellow()
                                 );
                             }
                         }
@@ -108,15 +105,15 @@ pub fn run() -> Result<()> {
                         println!("    exclude: .git/info/exclude");
                     }
                     crate::config::ExcludeMode::None => {
-                        println!("    exclude: なし (hook 防御のみ)");
+                        println!("    exclude: none (hook protection only)");
                     }
                 }
                 let worktree_path = git.root.join(file_path);
                 if worktree_path.exists() {
                     let metadata = std::fs::metadata(&worktree_path)?;
-                    println!("    ファイルサイズ: {}", format_size(metadata.len()));
+                    println!("    file size: {}", format_size(metadata.len()));
                 } else {
-                    println!("{}", "    ⚠ ファイルが存在しません".yellow());
+                    println!("{}", "    warning: file does not exist".yellow());
                 }
                 println!();
             }

@@ -32,7 +32,7 @@ pub fn check_size(path: &Path, force: bool) -> Result<(), ShadowError> {
 pub fn atomic_write(target: &Path, content: &[u8]) -> anyhow::Result<()> {
     let parent = target
         .parent()
-        .ok_or_else(|| anyhow::anyhow!("対象パスに親ディレクトリがありません"))?;
+        .ok_or_else(|| anyhow::anyhow!("target path has no parent directory"))?;
 
     let mut tmp = tempfile::NamedTempFile::new_in(parent)?;
     tmp.write_all(content)?;
@@ -74,7 +74,7 @@ mod tests {
     fn test_is_binary_utf8() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("utf8.txt");
-        std::fs::write(&path, "日本語テスト 🚀").unwrap();
+        std::fs::write(&path, "UTF-8 test: café résumé 🚀").unwrap();
         assert!(!is_binary(&path).unwrap());
     }
 

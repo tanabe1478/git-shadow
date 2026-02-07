@@ -45,7 +45,7 @@ pub fn handle(git: &GitRepo) -> Result<()> {
                 Err(e) => {
                     eprintln!(
                         "{}",
-                        format!("⚠ {} の復元に失敗しました: {}", normalized, e).yellow()
+                        format!("warning: failed to restore {}: {}", normalized, e).yellow()
                     );
                     failed.push(normalized.clone());
                 }
@@ -53,7 +53,7 @@ pub fn handle(git: &GitRepo) -> Result<()> {
             Err(e) => {
                 eprintln!(
                     "{}",
-                    format!("⚠ {} の stash 読み込みに失敗しました: {}", normalized, e).yellow()
+                    format!("warning: failed to read stash for {}: {}", normalized, e).yellow()
                 );
                 failed.push(normalized.clone());
             }
@@ -67,7 +67,7 @@ pub fn handle(git: &GitRepo) -> Result<()> {
         // Partial failure - keep lock
         eprintln!(
             "{}",
-            "⚠ 一部のファイルの復元に失敗しました。git-shadow restore を実行してください".yellow()
+            "warning: some files could not be restored. Run `git-shadow restore`".yellow()
         );
         for f in &failed {
             eprintln!("  - {}", f);
