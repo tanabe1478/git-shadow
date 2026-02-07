@@ -1,0 +1,198 @@
+# git-shadow Usage Guide
+
+## Installation
+
+```bash
+# Build and install
+cargo install --path .
+
+# Verify
+git-shadow --help
+```
+
+## Setup
+
+Run `install` once per repository:
+
+```bash
+cd your-repo
+git-shadow install
+```
+
+This creates:
+- `.git/shadow/` directory (baselines, stash, config)
+- Git hooks: `pre-commit`, `post-commit`, `post-merge`
+
+If hooks already exist, they are renamed to `<hook>.pre-shadow` and chained after git-shadow's processing.
+
+## Managing Files
+
+### Overlay: Local Changes on Tracked Files
+
+Use overlays when you want to add personal content to a file that the team already tracks.
+
+```bash
+# Register a tracked file
+git-shadow add CLAUDE.md
+
+# Edit freely — your changes are "shadow" changes
+echo "# My personal debugging notes" >> CLAUDE.md
+```
+
+**What happens on commit:**
+1. Your additions are stashed away
+2. The original (baseline) content is committed
+3. Your additions are restored immediately after
+
+**Options:**
+- `--force` — Skip the 1MB file size limit
+
+### Phantom: Local-Only Files
+
+Use phantoms for files that should exist only on your machine.
+
+```bash
+# Create and register a new local-only file
+echo "# Component-specific prompts" > src/components/CLAUDE.md
+git-shadow add --phantom src/components/CLAUDE.md
+```
+
+By default, phantom files are added to `.git/info/exclude` to hide them from `git status`.
+
+**Options:**
+- `--no-exclude` — Skip the `.git/info/exclude` entry. The file will appear in `git status` as untracked but will still be excluded from commits by the pre-commit hook.
+
+### Removing Files from Management
+
+```bash
+git-shadow remove CLAUDE.md
+```
+
+- **Overlay**: Restores the file to its baseline content. Shadow changes are discarded.
+- **Phantom**: The file remains on disk but is no longer managed. Its `.git/info/exclude` entry is removed.
+
+A confirmation prompt is shown before removal. Use `--force` to skip it (required in non-interactive environments).
+
+## Viewing Status and Changes
+
+### Status
+
+```bash
+git-shadow status
+```
+
+Shows all managed files with:
+- Overlay: baseline commit hash, diff line counts (+/- lines)
+- Phantom: exclude mode, file size
+- Warnings for stale locks, stash remnants, or baseline drift
+
+### Diff
+
+```bash
+# Show all shadow changes
+git-shadow diff
+
+# Show changes for a specific file
+git-shadow diff CLAUDE.md
+```
+
+- **Overlay**: Shows a colored unified diff between the baseline and current content
+- **Phantom**: Shows the entire file content as a new-file diff
+
+## Handling Upstream Changes
+
+When the team updates a file you have an overlay on (e.g., after `git pull`):
+
+```bash
+# post-merge hook will warn you:
+# "⚠ CLAUDE.md baseline is outdated. Run: git-shadow rebase CLAUDE.md"
+
+# Update your baseline and re-apply shadow changes
+git-shadow rebase CLAUDE.md
+```
+
+The rebase performs a 3-way merge:
+1. Old baseline (common ancestor)
+2. Your current content (with shadow changes)
+3. New HEAD content (upstream changes)
+
+If there's a conflict, standard conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`) are written to the file for manual resolution.
+
+```bash
+# Rebase all overlay files at once
+git-shadow rebase
+```
+
+## Recovery
+
+### Automatic Recovery
+
+If a commit is interrupted (e.g., commit message editor closed, commit-msg hook failed), shadow changes are stashed but not restored. The next git-shadow command will detect this and prompt you:
+
+```
+⚠ stash remnants found. Run: git-shadow restore
+```
+
+### Manual Recovery
+
+```bash
+# Restore all stashed files and clean up locks
+git-shadow restore
+
+# Restore a specific file
+git-shadow restore CLAUDE.md
+```
+
+`restore` handles all abnormal states:
+- Restores stashed files to the working tree
+- Removes stale lockfiles
+- Cleans up the stash directory
+
+## Diagnostics
+
+```bash
+git-shadow doctor
+```
+
+Checks:
+- Hook files exist with correct permissions and content
+- No competing hook managers (Husky, pre-commit, lefthook)
+- Config integrity (managed files and baselines exist)
+- No stash remnants or stale locks
+
+## Data Storage
+
+All data lives inside `.git/shadow/`, which is automatically excluded from commits:
+
+```
+.git/shadow/
+├── config.json          # Managed file list and metadata
+├── lock                 # PID-based lockfile
+├── baselines/           # Baseline snapshots (URL-encoded filenames)
+│   └── CLAUDE.md
+│   └── src%2Fcomponents%2FCLAUDE.md
+└── stash/               # Temporary stash during commits
+    └── ...
+```
+
+### Path Encoding
+
+Nested paths are URL-encoded for flat storage:
+- `src/components/CLAUDE.md` → `src%2Fcomponents%2FCLAUDE.md`
+- `docs/100%done.md` → `docs%2F100%25done.md`
+
+Encoding order: `%` → `%25` first, then `/` → `%2F`.
+
+## Important Notes
+
+### `git commit --no-verify`
+
+Using `--no-verify` skips the pre-commit hook, so shadow changes will be included in the commit. This is a Git limitation and cannot be prevented. Avoid using `--no-verify` when shadow-managed files have changes.
+
+### Partial Staging
+
+git-shadow does not support partial staging (`git add -p`) of overlay files. If both staged and unstaged changes exist for an overlay file, the pre-commit hook will block the commit. Stage the entire file with `git add <file>` before committing.
+
+### Binary Files
+
+Only text files are supported. Binary files are rejected by `git-shadow add` because the rebase command relies on text-based 3-way merging.
