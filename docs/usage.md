@@ -35,10 +35,10 @@ Use overlays when you want to add personal content to a file that the team alrea
 
 ```bash
 # Register a tracked file
-git-shadow add CLAUDE.md
+git-shadow add docker-compose.yml
 
 # Edit freely — your changes are "shadow" changes
-echo "# My personal debugging notes" >> CLAUDE.md
+echo "  # my debug port override" >> docker-compose.yml
 ```
 
 **What happens on commit:**
@@ -55,8 +55,8 @@ Use phantoms for files that should exist only on your machine.
 
 ```bash
 # Create and register a new local-only file
-echo "# Component-specific prompts" > src/components/CLAUDE.md
-git-shadow add --phantom src/components/CLAUDE.md
+echo "#!/bin/bash" > scripts/local-setup.sh
+git-shadow add --phantom scripts/local-setup.sh
 ```
 
 By default, phantom files are added to `.git/info/exclude` to hide them from `git status`.
@@ -67,7 +67,7 @@ By default, phantom files are added to `.git/info/exclude` to hide them from `gi
 ### Removing Files from Management
 
 ```bash
-git-shadow remove CLAUDE.md
+git-shadow remove docker-compose.yml
 ```
 
 - **Overlay**: Restores the file to its baseline content. Shadow changes are discarded.
@@ -95,7 +95,7 @@ Shows all managed files with:
 git-shadow diff
 
 # Show changes for a specific file
-git-shadow diff CLAUDE.md
+git-shadow diff docker-compose.yml
 ```
 
 - **Overlay**: Shows a colored unified diff between the baseline and current content
@@ -107,10 +107,10 @@ When the team updates a file you have an overlay on (e.g., after `git pull`):
 
 ```bash
 # post-merge hook will warn you:
-# "warning: baseline for CLAUDE.md is outdated. Run `git-shadow rebase CLAUDE.md`"
+# "warning: baseline for docker-compose.yml is outdated. Run `git-shadow rebase docker-compose.yml`"
 
 # Update your baseline and re-apply shadow changes
-git-shadow rebase CLAUDE.md
+git-shadow rebase docker-compose.yml
 ```
 
 The rebase performs a 3-way merge:
@@ -143,7 +143,7 @@ warning: stash has remaining files (a previous commit may have been interrupted)
 git-shadow restore
 
 # Restore a specific file
-git-shadow restore CLAUDE.md
+git-shadow restore docker-compose.yml
 ```
 
 `restore` handles all abnormal states:
@@ -172,8 +172,8 @@ All data lives inside `.git/shadow/`, which is automatically excluded from commi
 ├── config.json          # Managed file list and metadata
 ├── lock                 # PID-based lockfile
 ├── baselines/           # Baseline snapshots (URL-encoded filenames)
-│   └── CLAUDE.md
-│   └── src%2Fcomponents%2FCLAUDE.md
+│   └── docker-compose.yml
+│   └── scripts%2Flocal-setup.sh
 └── stash/               # Temporary stash during commits
     └── ...
 ```
@@ -181,7 +181,7 @@ All data lives inside `.git/shadow/`, which is automatically excluded from commi
 ### Path Encoding
 
 Nested paths are URL-encoded for flat storage:
-- `src/components/CLAUDE.md` → `src%2Fcomponents%2FCLAUDE.md`
+- `scripts/local-setup.sh` → `scripts%2Flocal-setup.sh`
 - `docs/100%done.md` → `docs%2F100%25done.md`
 
 Encoding order: `%` → `%25` first, then `/` → `%2F`.

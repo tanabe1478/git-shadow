@@ -6,14 +6,14 @@ Git リポジトリ内の**ローカル限定の変更**を管理する CLI ツ�
 
 ## なぜ必要？
 
-主な用途は `CLAUDE.md` などの共有ファイルへの個人的な追記の管理です。自分だけのプロンプトやメモ、コーディング規約を追記しても、チームのコミット履歴を汚しません。
+共有ファイルに個人的な変更を加えたいことがあります — デバッグ設定、ローカル環境のオーバーライド、個人的なメモなど。git-shadow を使えば、それらのローカル編集をチームのコミット履歴に残さずに管理できます。
 
 ## コンセプト
 
 | 種別 | 説明 | 例 |
 |------|------|-----|
-| **overlay** | 既存のトラッキング済みファイルにローカル変更を重ねる | ルートの `CLAUDE.md` に個人メモを追記 |
-| **phantom** | リポジトリに存在しないファイルをローカルだけで作成する | `src/components/CLAUDE.md` を新規作成 |
+| **overlay** | 既存のトラッキング済みファイルにローカル変更を重ねる | 共有の `docker-compose.yml` に個人用デバッグ設定を追加 |
+| **phantom** | リポジトリに存在しないファイルをローカルだけで作成する | `scripts/local-setup.sh` をローカル限定で作成 |
 
 ## クイックスタート
 
@@ -26,19 +26,19 @@ cd your-repo
 git-shadow install
 
 # overlay を追加（既存のトラッキング済みファイル）
-git-shadow add CLAUDE.md
-echo "# 個人メモ" >> CLAUDE.md
+git-shadow add docker-compose.yml
+echo "  # 個人用デバッグポート" >> docker-compose.yml
 
 # phantom を追加（新規ローカル限定ファイル）
-echo "# コンポーネント用ドキュメント" > src/components/CLAUDE.md
-git-shadow add --phantom src/components/CLAUDE.md
+echo "#!/bin/bash" > scripts/local-setup.sh
+git-shadow add --phantom scripts/local-setup.sh
 
 # 普通にコミット — shadow 変更は自動的に除外される
 git add -A && git commit -m "チームの変更"
 
-# 確認: 個人メモはワーキングツリーに残っている
-cat CLAUDE.md  # 追記内容あり
-git show HEAD:CLAUDE.md  # クリーンなチーム用の内容のみ
+# 確認: 個人的な変更はワーキングツリーに残っている
+cat docker-compose.yml        # 個人の追記あり
+git show HEAD:docker-compose.yml  # クリーンなチーム用の内容のみ
 ```
 
 ## コマンド一覧
