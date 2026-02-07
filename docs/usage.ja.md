@@ -35,10 +35,10 @@ git-shadow install
 
 ```bash
 # トラッキング済みファイルを登録
-git-shadow add CLAUDE.md
+git-shadow add docker-compose.yml
 
 # 自由に編集 — あなたの変更は「shadow 変更」になる
-echo "# 個人用デバッグメモ" >> CLAUDE.md
+echo "  # 個人用デバッグポート" >> docker-compose.yml
 ```
 
 **コミット時の動作:**
@@ -55,8 +55,8 @@ echo "# 個人用デバッグメモ" >> CLAUDE.md
 
 ```bash
 # 新しいローカル限定ファイルを作成して登録
-echo "# コンポーネント専用プロンプト" > src/components/CLAUDE.md
-git-shadow add --phantom src/components/CLAUDE.md
+echo "#!/bin/bash" > scripts/local-setup.sh
+git-shadow add --phantom scripts/local-setup.sh
 ```
 
 デフォルトでは `.git/info/exclude` に追加され、`git status` に表示されなくなります。
@@ -67,7 +67,7 @@ git-shadow add --phantom src/components/CLAUDE.md
 ### 管理の解除
 
 ```bash
-git-shadow remove CLAUDE.md
+git-shadow remove docker-compose.yml
 ```
 
 - **Overlay**: ファイルをベースラインの内容に戻します。shadow 変更は破棄されます。
@@ -95,7 +95,7 @@ git-shadow status
 git-shadow diff
 
 # 特定ファイルの変更を表示
-git-shadow diff CLAUDE.md
+git-shadow diff docker-compose.yml
 ```
 
 - **Overlay**: ベースラインと現在の内容のカラー unified diff を表示
@@ -107,10 +107,10 @@ overlay をかけているファイルがチームによって更新された場
 
 ```bash
 # post-merge hook が警告を表示:
-# "warning: baseline for CLAUDE.md is outdated. Run `git-shadow rebase CLAUDE.md`"
+# "warning: baseline for docker-compose.yml is outdated. Run `git-shadow rebase docker-compose.yml`"
 
 # ベースラインを更新し shadow 変更を再適用
-git-shadow rebase CLAUDE.md
+git-shadow rebase docker-compose.yml
 ```
 
 rebase は 3-way merge を実行します:
@@ -143,7 +143,7 @@ warning: stash has remaining files (a previous commit may have been interrupted)
 git-shadow restore
 
 # 特定ファイルを復元
-git-shadow restore CLAUDE.md
+git-shadow restore docker-compose.yml
 ```
 
 `restore` はあらゆる異常状態に対応します:
@@ -172,8 +172,8 @@ git-shadow doctor
 ├── config.json          # 管理対象ファイルのリスト・メタデータ
 ├── lock                 # PID ベースのロックファイル
 ├── baselines/           # ベースラインのスナップショット (URL エンコードされたファイル名)
-│   └── CLAUDE.md
-│   └── src%2Fcomponents%2FCLAUDE.md
+│   └── docker-compose.yml
+│   └── scripts%2Flocal-setup.sh
 └── stash/               # コミット中の一時退避先
     └── ...
 ```
@@ -181,7 +181,7 @@ git-shadow doctor
 ### パスのエンコーディング
 
 ネストしたパスはフラットに保存するため URL エンコードされます:
-- `src/components/CLAUDE.md` → `src%2Fcomponents%2FCLAUDE.md`
+- `scripts/local-setup.sh` → `scripts%2Flocal-setup.sh`
 - `docs/100%done.md` → `docs%2F100%25done.md`
 
 エンコード順序: `%` → `%25` を先に、次に `/` → `%2F`。

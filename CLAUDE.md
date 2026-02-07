@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-**git-shadow** is a Rust CLI tool that manages local-only changes in Git repositories. It lets users maintain personal edits (e.g., appending notes to `CLAUDE.md`) that stay active in the working tree but are automatically stripped before each commit, keeping Git history clean.
+**git-shadow** is a Rust CLI tool that manages local-only changes in Git repositories. It lets users maintain personal edits (e.g., debug settings, local config overrides, private notes) that stay active in the working tree but are automatically stripped before each commit, keeping Git history clean.
 
 - **Requirements spec**: `docs/requirements.md` (v4, Japanese)
 - **Detailed usage**: `docs/usage.md` (English), `docs/usage.ja.md` (Japanese)

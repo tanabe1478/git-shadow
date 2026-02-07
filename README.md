@@ -6,14 +6,14 @@ A CLI tool for managing **local-only changes** in Git repositories. Your edits s
 
 ## Why?
 
-The primary use case is managing personal additions to shared files like `CLAUDE.md`. You can append your own prompts, notes, or coding conventions without polluting the team's commit history.
+Sometimes you need personal changes to shared files — debug settings in a config, local environment overrides, or private notes. git-shadow lets you maintain those local edits without them ever appearing in the team's commit history.
 
 ## Concepts
 
 | Type | Description | Example |
 |------|-------------|---------|
-| **overlay** | Layer local changes on top of an existing tracked file | Append personal notes to the root `CLAUDE.md` |
-| **phantom** | Create a file that exists only locally and is never committed | Add `src/components/CLAUDE.md` as a new local-only file |
+| **overlay** | Layer local changes on top of an existing tracked file | Add personal debug settings to a shared `docker-compose.yml` |
+| **phantom** | Create a file that exists only locally and is never committed | Create a local-only `scripts/local-setup.sh` for your environment |
 
 ## Quick Start
 
@@ -26,19 +26,19 @@ cd your-repo
 git-shadow install
 
 # Add an overlay (existing tracked file)
-git-shadow add CLAUDE.md
-echo "# My personal notes" >> CLAUDE.md
+git-shadow add docker-compose.yml
+echo "  # my debug port override" >> docker-compose.yml
 
 # Add a phantom (new local-only file)
-echo "# Component docs" > src/components/CLAUDE.md
-git-shadow add --phantom src/components/CLAUDE.md
+echo "#!/bin/bash" > scripts/local-setup.sh
+git-shadow add --phantom scripts/local-setup.sh
 
 # Commit as usual — shadow changes are automatically excluded
 git add -A && git commit -m "team changes"
 
-# Verify: your personal notes are still in the working tree
-cat CLAUDE.md  # includes your additions
-git show HEAD:CLAUDE.md  # clean, team-only content
+# Verify: your personal changes are still in the working tree
+cat docker-compose.yml        # includes your additions
+git show HEAD:docker-compose.yml  # clean, team-only content
 ```
 
 ## Commands
