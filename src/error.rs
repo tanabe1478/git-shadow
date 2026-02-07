@@ -20,7 +20,9 @@ pub enum ShadowError {
     #[error("ファイル '{0}' はバイナリファイルです")]
     BinaryFile(String),
 
-    #[error("ファイル '{0}' がサイズ上限を超えています ({1} bytes > {2} bytes)。--force で突破可能です")]
+    #[error(
+        "ファイル '{0}' がサイズ上限を超えています ({1} bytes > {2} bytes)。--force で突破可能です"
+    )]
     FileTooLarge(String, u64, u64),
 
     #[error("ロックがプロセス {pid} に保持されています (開始: {timestamp})")]

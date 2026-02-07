@@ -193,7 +193,11 @@ mod tests {
     }
 
     fn run_cmd(cwd: &Path, cmd: &str, args: &[&str]) {
-        let output = Command::new(cmd).args(args).current_dir(cwd).output().unwrap();
+        let output = Command::new(cmd)
+            .args(args)
+            .current_dir(cwd)
+            .output()
+            .unwrap();
         if !output.status.success() {
             panic!(
                 "{} {} failed: {}",
