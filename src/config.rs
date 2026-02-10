@@ -29,6 +29,9 @@ pub struct FileEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub baseline_commit: Option<String>,
     pub exclude_mode: ExcludeMode,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub is_directory: bool,
     pub added_at: DateTime<Utc>,
 }
 
@@ -82,13 +85,19 @@ impl ShadowConfig {
                 file_type: FileType::Overlay,
                 baseline_commit: Some(commit),
                 exclude_mode: ExcludeMode::None,
+                is_directory: false,
                 added_at: Utc::now(),
             },
         );
         Ok(())
     }
 
-    pub fn add_phantom(&mut self, path: String, exclude: ExcludeMode) -> Result<(), ShadowError> {
+    pub fn add_phantom(
+        &mut self,
+        path: String,
+        exclude: ExcludeMode,
+        is_directory: bool,
+    ) -> Result<(), ShadowError> {
         if self.files.contains_key(&path) {
             return Err(ShadowError::AlreadyManaged(path));
         }
@@ -98,6 +107,7 @@ impl ShadowConfig {
                 file_type: FileType::Phantom,
                 baseline_commit: None,
                 exclude_mode: exclude,
+                is_directory,
                 added_at: Utc::now(),
             },
         );
@@ -146,6 +156,7 @@ mod tests {
             .add_phantom(
                 "src/components/CLAUDE.md".to_string(),
                 ExcludeMode::GitInfoExclude,
+                false,
             )
             .unwrap();
 
@@ -159,7 +170,7 @@ mod tests {
     fn test_add_phantom_no_exclude() {
         let mut config = ShadowConfig::new();
         config
-            .add_phantom("test.md".to_string(), ExcludeMode::None)
+            .add_phantom("test.md".to_string(), ExcludeMode::None, false)
             .unwrap();
 
         let entry = config.get("test.md").unwrap();
@@ -216,6 +227,7 @@ mod tests {
             .add_phantom(
                 "src/components/CLAUDE.md".to_string(),
                 ExcludeMode::GitInfoExclude,
+                false,
             )
             .unwrap();
 
@@ -263,6 +275,61 @@ mod tests {
         let phantom = config.get("src/components/CLAUDE.md").unwrap();
         assert_eq!(phantom.file_type, FileType::Phantom);
         assert_eq!(phantom.baseline_commit, None);
+    }
+
+    #[test]
+    fn test_add_phantom_directory() {
+        let mut config = ShadowConfig::new();
+        config
+            .add_phantom(".claude".to_string(), ExcludeMode::GitInfoExclude, true)
+            .unwrap();
+
+        let entry = config.get(".claude").unwrap();
+        assert_eq!(entry.file_type, FileType::Phantom);
+        assert!(entry.is_directory);
+        assert_eq!(entry.exclude_mode, ExcludeMode::GitInfoExclude);
+    }
+
+    #[test]
+    fn test_add_phantom_file_is_not_directory() {
+        let mut config = ShadowConfig::new();
+        config
+            .add_phantom("local.md".to_string(), ExcludeMode::None, false)
+            .unwrap();
+
+        let entry = config.get("local.md").unwrap();
+        assert!(!entry.is_directory);
+    }
+
+    #[test]
+    fn test_deserialize_without_is_directory() {
+        // Old config.json without is_directory field should default to false
+        let json = r#"{
+            "version": 1,
+            "files": {
+                "local.md": {
+                    "type": "phantom",
+                    "exclude_mode": "git_info_exclude",
+                    "added_at": "2026-02-07T12:00:00Z"
+                }
+            }
+        }"#;
+
+        let config: ShadowConfig = serde_json::from_str(json).unwrap();
+        let entry = config.get("local.md").unwrap();
+        assert!(!entry.is_directory);
+    }
+
+    #[test]
+    fn test_serialize_directory_phantom() {
+        let mut config = ShadowConfig::new();
+        config
+            .add_phantom(".claude".to_string(), ExcludeMode::GitInfoExclude, true)
+            .unwrap();
+
+        let json = serde_json::to_value(&config).unwrap();
+        let entry = &json["files"][".claude"];
+        assert_eq!(entry["is_directory"], true);
     }
 
     #[test]

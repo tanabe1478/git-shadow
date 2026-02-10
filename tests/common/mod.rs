@@ -21,6 +21,10 @@ impl TestRepo {
         Self { dir, root }
     }
 
+    pub fn create_dir(&self, path: &str) {
+        std::fs::create_dir_all(self.root.join(path)).unwrap();
+    }
+
     pub fn create_file(&self, path: &str, content: &str) {
         let file_path = self.root.join(path);
         if let Some(parent) = file_path.parent() {

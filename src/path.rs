@@ -32,6 +32,9 @@ pub fn normalize_path(input: &str, repo_root: &Path) -> Result<String> {
         result = stripped;
     }
 
+    // Strip trailing / (directory indicator)
+    let result = result.trim_end_matches('/');
+
     Ok(result.to_string())
 }
 
@@ -170,6 +173,27 @@ mod tests {
             normalize_path("/repo/src/CLAUDE.md", &repo).unwrap(),
             "src/CLAUDE.md"
         );
+    }
+
+    #[test]
+    fn test_normalize_strips_trailing_slash() {
+        let repo = PathBuf::from("/repo");
+        assert_eq!(normalize_path(".claude/", &repo).unwrap(), ".claude");
+    }
+
+    #[test]
+    fn test_normalize_strips_trailing_slash_nested() {
+        let repo = PathBuf::from("/repo");
+        assert_eq!(
+            normalize_path("src/components/", &repo).unwrap(),
+            "src/components"
+        );
+    }
+
+    #[test]
+    fn test_normalize_dir_with_leading_dot_slash() {
+        let repo = PathBuf::from("/repo");
+        assert_eq!(normalize_path("./.claude/", &repo).unwrap(), ".claude");
     }
 
     #[test]

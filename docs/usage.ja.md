@@ -64,6 +64,20 @@ git-shadow add --phantom scripts/local-setup.sh
 **オプション:**
 - `--no-exclude` — `.git/info/exclude` への追加をスキップ。`git status` には未追跡ファイルとして表示されますが、pre-commit hook によりコミットからは除外されます。
 
+#### Phantom ディレクトリ
+
+ディレクトリ全体を phantom として登録することもできます:
+
+```bash
+# ローカル限定ディレクトリを登録
+git-shadow add --phantom .claude/
+git-shadow add --phantom codemaps/
+```
+
+ディレクトリ phantom は `.git/info/exclude` による管理のみ行われ、stash/restore は不要です。ディレクトリとその中身はワーキングツリーに常に残り、誤って `git add` されたファイルは pre-commit hook で自動的にアンステージされます。
+
+`git-shadow status` ではディレクトリ phantom は `(phantom dir)` ラベルとエントリ数で表示されます。
+
 ### 管理の解除
 
 ```bash
