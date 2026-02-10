@@ -3,6 +3,10 @@ name = "git-shadow"
 version = "0.1.0"
 edition = "2021"
 description = "Manage local-only changes in Git repositories"
+license = "MIT"
+repository = "https://github.com/tanabe1478/git-shadow"
+homepage = "https://github.com/tanabe1478/git-shadow"
+readme = "README.md"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }

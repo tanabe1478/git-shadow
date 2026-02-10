@@ -15,12 +15,35 @@ Git リポジトリ内の**ローカル限定の変更**を管理する CLI ツ�
 | **overlay** | 既存のトラッキング済みファイルにローカル変更を重ねる | 共有の `docker-compose.yml` に個人用デバッグ設定を追加 |
 | **phantom** | リポジトリに存在しないファイルをローカルだけで作成する | `scripts/local-setup.sh` をローカル限定で作成 |
 
+## インストール
+
+### ビルド済みバイナリのダウンロード
+
+お使いのプラットフォーム向けのバイナリを [GitHub Releases](https://github.com/tanabe1478/git-shadow/releases/latest) からダウンロードできます:
+
+| プラットフォーム | アーキテクチャ | ダウンロード |
+|----------|-------------|----------|
+| Linux | x86_64 | [git-shadow-x86_64-unknown-linux-gnu.tar.gz](https://github.com/tanabe1478/git-shadow/releases/latest/download/git-shadow-x86_64-unknown-linux-gnu.tar.gz) |
+| Linux | aarch64 | [git-shadow-aarch64-unknown-linux-gnu.tar.gz](https://github.com/tanabe1478/git-shadow/releases/latest/download/git-shadow-aarch64-unknown-linux-gnu.tar.gz) |
+| macOS | Apple Silicon | [git-shadow-aarch64-apple-darwin.tar.gz](https://github.com/tanabe1478/git-shadow/releases/latest/download/git-shadow-aarch64-apple-darwin.tar.gz) |
+| macOS | Intel | [git-shadow-x86_64-apple-darwin.tar.gz](https://github.com/tanabe1478/git-shadow/releases/latest/download/git-shadow-x86_64-apple-darwin.tar.gz) |
+
+```bash
+# 例: macOS Apple Silicon
+curl -LO https://github.com/tanabe1478/git-shadow/releases/latest/download/git-shadow-aarch64-apple-darwin.tar.gz
+tar xzf git-shadow-aarch64-apple-darwin.tar.gz
+sudo mv git-shadow /usr/local/bin/
+```
+
+### ソースからビルド
+
+```bash
+cargo install --path .
+```
+
 ## クイックスタート
 
 ```bash
-# ソースからビルド
-cargo install --path .
-
 # リポジトリで初期化
 cd your-repo
 git-shadow install
@@ -78,7 +101,7 @@ git show HEAD:docker-compose.yml  # クリーンなチーム用の内容のみ
 ## 動作要件
 
 - Git 2.20+
-- Rust 1.70+（ソースからビルドする場合）
+- Rust 1.70+（ソースからビルドする場合のみ）
 
 ## ライセンス
 
