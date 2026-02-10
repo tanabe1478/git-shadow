@@ -77,6 +77,25 @@ cargo clippy -- -D warnings     # Must pass with zero warnings
 cargo fmt --check               # Must pass
 ```
 
+### CI
+
+GitHub Actions runs on every push to `main` and on pull requests:
+- **fmt** -- `cargo fmt --check`
+- **clippy** -- `cargo clippy -- -D warnings`
+- **test** -- `cargo test`
+
+Configuration: `.github/workflows/ci.yml`
+
+### Pre-commit Hook
+
+A development pre-commit hook is provided in `dev-hooks/`. To enable it:
+
+```bash
+git config core.hooksPath dev-hooks
+```
+
+This runs `cargo fmt --check` and `cargo clippy -- -D warnings` before each commit.
+
 ### TDD Pattern
 
 All features were developed test-first. Unit tests use `*_for_test` helper functions to bypass `std::env::current_dir()` dependency in `GitRepo::discover()`. Each test creates an isolated git repo via `tempfile::tempdir()`.
