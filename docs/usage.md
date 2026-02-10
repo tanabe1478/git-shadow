@@ -64,6 +64,20 @@ By default, phantom files are added to `.git/info/exclude` to hide them from `gi
 **Options:**
 - `--no-exclude` — Skip the `.git/info/exclude` entry. The file will appear in `git status` as untracked but will still be excluded from commits by the pre-commit hook.
 
+#### Phantom Directories
+
+You can also register entire directories as phantoms:
+
+```bash
+# Register a local-only directory
+git-shadow add --phantom .claude/
+git-shadow add --phantom codemaps/
+```
+
+Directory phantoms are managed via `.git/info/exclude` only — no stash/restore is needed. The directory and its contents remain in the working tree at all times, and any accidentally staged files are automatically unstaged by the pre-commit hook.
+
+`git-shadow status` shows directory phantoms with a `(phantom dir)` label and an entry count instead of file size.
+
 ### Removing Files from Management
 
 ```bash

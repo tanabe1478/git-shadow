@@ -31,10 +31,17 @@ pub fn run(file: &str, force: bool) -> Result<()> {
                 )
             }
             FileType::Phantom => {
-                format!(
-                    "{} will be unregistered from shadow management. The file itself will remain. Continue? [y/N]",
-                    normalized
-                )
+                if entry.is_directory {
+                    format!(
+                        "{} (directory) will be unregistered from shadow management. The directory and its contents will remain. Continue? [y/N]",
+                        normalized
+                    )
+                } else {
+                    format!(
+                        "{} will be unregistered from shadow management. The file itself will remain. Continue? [y/N]",
+                        normalized
+                    )
+                }
             }
         };
 
@@ -53,7 +60,7 @@ pub fn run(file: &str, force: bool) -> Result<()> {
             remove_overlay(&git, &normalized)?;
         }
         FileType::Phantom => {
-            remove_phantom(&git, &normalized, &entry.exclude_mode)?;
+            remove_phantom(&git, &normalized, &entry.exclude_mode, entry.is_directory)?;
         }
     }
 
@@ -83,11 +90,21 @@ fn remove_overlay(git: &GitRepo, file_path: &str) -> Result<()> {
     Ok(())
 }
 
-fn remove_phantom(git: &GitRepo, file_path: &str, exclude_mode: &ExcludeMode) -> Result<()> {
+fn remove_phantom(
+    git: &GitRepo,
+    file_path: &str,
+    exclude_mode: &ExcludeMode,
+    is_directory: bool,
+) -> Result<()> {
     // Remove from .git/info/exclude if applicable
     if *exclude_mode == ExcludeMode::GitInfoExclude {
+        let exclude_path = if is_directory {
+            format!("{}/", file_path)
+        } else {
+            file_path.to_string()
+        };
         let manager = ExcludeManager::new(&git.git_dir);
-        manager.remove_entry(file_path)?;
+        manager.remove_entry(&exclude_path)?;
     }
 
     Ok(())
@@ -175,7 +192,7 @@ mod tests {
         // Create phantom file
         std::fs::write(git.root.join("local.md"), "# Local\n").unwrap();
         config
-            .add_phantom("local.md".to_string(), ExcludeMode::GitInfoExclude)
+            .add_phantom("local.md".to_string(), ExcludeMode::GitInfoExclude, false)
             .unwrap();
 
         // Add to exclude
@@ -185,7 +202,7 @@ mod tests {
         config.save(&git.shadow_dir).unwrap();
 
         // Remove phantom
-        remove_phantom_for_test(&git, "local.md", &ExcludeMode::GitInfoExclude);
+        remove_phantom_for_test(&git, "local.md", &ExcludeMode::GitInfoExclude, false);
 
         // File should still exist
         assert!(git.root.join("local.md").exists());
@@ -204,12 +221,12 @@ mod tests {
 
         std::fs::write(git.root.join("local.md"), "# Local\n").unwrap();
         config
-            .add_phantom("local.md".to_string(), ExcludeMode::None)
+            .add_phantom("local.md".to_string(), ExcludeMode::None, false)
             .unwrap();
         config.save(&git.shadow_dir).unwrap();
 
         // Remove phantom with no-exclude mode
-        remove_phantom_for_test(&git, "local.md", &ExcludeMode::None);
+        remove_phantom_for_test(&git, "local.md", &ExcludeMode::None, false);
 
         // Should not error - file still exists
         assert!(git.root.join("local.md").exists());
@@ -313,10 +330,69 @@ mod tests {
     }
 
     /// Helper to remove phantom (bypasses prompt)
-    fn remove_phantom_for_test(git: &GitRepo, file_path: &str, exclude_mode: &ExcludeMode) {
+    fn remove_phantom_for_test(
+        git: &GitRepo,
+        file_path: &str,
+        exclude_mode: &ExcludeMode,
+        is_directory: bool,
+    ) {
         if *exclude_mode == ExcludeMode::GitInfoExclude {
+            let exclude_path = if is_directory {
+                format!("{}/", file_path)
+            } else {
+                file_path.to_string()
+            };
             let manager = ExcludeManager::new(&git.git_dir);
-            manager.remove_entry(file_path).unwrap();
+            manager.remove_entry(&exclude_path).unwrap();
         }
+    }
+
+    #[test]
+    fn test_remove_phantom_directory_removes_exclude_with_trailing_slash() {
+        let (_dir, git) = make_test_repo();
+        let mut config = ShadowConfig::new();
+
+        // Create directory phantom
+        std::fs::create_dir_all(git.root.join(".claude")).unwrap();
+        std::fs::write(git.root.join(".claude/settings.json"), "{}").unwrap();
+
+        // Add exclude entry with trailing slash (as add_phantom would)
+        let manager = ExcludeManager::new(&git.git_dir);
+        manager.add_entry(".claude/").unwrap();
+
+        config
+            .add_phantom(".claude".to_string(), ExcludeMode::GitInfoExclude, true)
+            .unwrap();
+        config.save(&git.shadow_dir).unwrap();
+
+        // Remove phantom directory
+        remove_phantom_for_test(&git, ".claude", &ExcludeMode::GitInfoExclude, true);
+
+        // Exclude entry should be removed
+        let entries = manager.list_entries().unwrap();
+        assert!(
+            !entries.contains(&".claude/".to_string()),
+            "Exclude entry with trailing slash should be removed, got: {:?}",
+            entries
+        );
+
+        // Directory should still exist
+        assert!(git.root.join(".claude").is_dir());
+        assert!(git.root.join(".claude/settings.json").exists());
+    }
+
+    #[test]
+    fn test_remove_phantom_file_removes_exclude_without_trailing_slash() {
+        let (_dir, git) = make_test_repo();
+
+        // Add file exclude entry (no trailing slash)
+        let manager = ExcludeManager::new(&git.git_dir);
+        manager.add_entry("local.md").unwrap();
+
+        // Remove phantom file
+        remove_phantom_for_test(&git, "local.md", &ExcludeMode::GitInfoExclude, false);
+
+        let entries = manager.list_entries().unwrap();
+        assert!(!entries.contains(&"local.md".to_string()));
     }
 }

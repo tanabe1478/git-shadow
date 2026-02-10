@@ -91,20 +91,32 @@ fn add_phantom(
         ));
     }
 
+    let full_path = git.root.join(normalized);
+    let is_dir = full_path.is_dir();
+
     let exclude_mode = if no_exclude {
         ExcludeMode::None
     } else {
-        // Add to .git/info/exclude
+        // Add to .git/info/exclude (with trailing / for directories)
+        let exclude_path = if is_dir {
+            format!("{}/", normalized)
+        } else {
+            normalized.to_string()
+        };
         let manager = ExcludeManager::new(&git.git_dir);
         manager
-            .add_entry(normalized)
+            .add_entry(&exclude_path)
             .context("failed to add to .git/info/exclude")?;
         ExcludeMode::GitInfoExclude
     };
 
-    config.add_phantom(normalized.to_string(), exclude_mode)?;
+    config.add_phantom(normalized.to_string(), exclude_mode, is_dir)?;
 
-    println!("registered {} as phantom", normalized);
+    if is_dir {
+        println!("registered {} as phantom directory", normalized);
+    } else {
+        println!("registered {} as phantom", normalized);
+    }
     Ok(())
 }
 
@@ -259,6 +271,66 @@ mod tests {
 
         let entry = config.get("src/CLAUDE.md").unwrap();
         assert_eq!(entry.exclude_mode, ExcludeMode::None);
+    }
+
+    #[test]
+    fn test_add_phantom_directory_creates_config_entry() {
+        let (_dir, git) = make_test_repo();
+        // Create an untracked directory
+        std::fs::create_dir_all(git.root.join(".claude")).unwrap();
+        std::fs::write(git.root.join(".claude/settings.json"), "{}").unwrap();
+
+        let mut config = ShadowConfig::new();
+        add_phantom(&git, &mut config, ".claude", false).unwrap();
+
+        let entry = config.get(".claude").unwrap();
+        assert_eq!(entry.file_type, crate::config::FileType::Phantom);
+        assert!(entry.is_directory);
+    }
+
+    #[test]
+    fn test_add_phantom_directory_adds_trailing_slash_to_exclude() {
+        let (_dir, git) = make_test_repo();
+        std::fs::create_dir_all(git.root.join(".claude")).unwrap();
+        std::fs::write(git.root.join(".claude/notes.md"), "notes").unwrap();
+        std::fs::create_dir_all(git.git_dir.join("info")).unwrap();
+
+        let mut config = ShadowConfig::new();
+        add_phantom(&git, &mut config, ".claude", false).unwrap();
+
+        let manager = ExcludeManager::new(&git.git_dir);
+        let entries = manager.list_entries().unwrap();
+        assert!(
+            entries.contains(&".claude/".to_string()),
+            "exclude entry should have trailing slash for directory, got: {:?}",
+            entries
+        );
+    }
+
+    #[test]
+    fn test_add_phantom_directory_no_exclude() {
+        let (_dir, git) = make_test_repo();
+        std::fs::create_dir_all(git.root.join("codemaps")).unwrap();
+        std::fs::write(git.root.join("codemaps/map.json"), "{}").unwrap();
+
+        let mut config = ShadowConfig::new();
+        add_phantom(&git, &mut config, "codemaps", true).unwrap();
+
+        let entry = config.get("codemaps").unwrap();
+        assert!(entry.is_directory);
+        assert_eq!(entry.exclude_mode, ExcludeMode::None);
+    }
+
+    #[test]
+    fn test_add_phantom_file_not_directory() {
+        let (_dir, git) = make_test_repo();
+        std::fs::write(git.root.join("local.md"), "# Local\n").unwrap();
+
+        let mut config = ShadowConfig::new();
+        add_phantom(&git, &mut config, "local.md", false).unwrap();
+
+        let entry = config.get("local.md").unwrap();
+        assert!(!entry.is_directory);
     }
 
     #[test]

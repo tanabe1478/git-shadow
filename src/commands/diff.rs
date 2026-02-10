@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use crate::config::{FileType, ShadowConfig};
+use crate::config::{FileEntry, FileType, ShadowConfig};
 use crate::diff_util;
 use crate::git::GitRepo;
 use crate::path;
@@ -30,7 +30,7 @@ pub fn run(file: Option<&str>) -> Result<()> {
                 show_overlay_diff(&git, file_path)?;
             }
             FileType::Phantom => {
-                show_phantom_diff(&git, file_path)?;
+                show_phantom_diff(&git, file_path, entry)?;
             }
         }
     }
@@ -67,8 +67,20 @@ fn show_overlay_diff(git: &GitRepo, file_path: &str) -> Result<()> {
     Ok(())
 }
 
-fn show_phantom_diff(git: &GitRepo, file_path: &str) -> Result<()> {
+fn show_phantom_diff(git: &GitRepo, file_path: &str, entry: &FileEntry) -> Result<()> {
     let worktree_path = git.root.join(file_path);
+
+    if entry.is_directory {
+        if worktree_path.is_dir() {
+            let count = std::fs::read_dir(&worktree_path)
+                .map(|entries| entries.count())
+                .unwrap_or(0);
+            println!("{}: phantom directory ({} entries)", file_path, count);
+        } else {
+            println!("{}: phantom directory does not exist", file_path);
+        }
+        return Ok(());
+    }
 
     if !worktree_path.exists() {
         println!("{}: file does not exist", file_path);
@@ -190,7 +202,7 @@ mod tests {
 
         std::fs::write(git.root.join("local.md"), "# Local\nline2\n").unwrap();
         config
-            .add_phantom("local.md".to_string(), ExcludeMode::None)
+            .add_phantom("local.md".to_string(), ExcludeMode::None, false)
             .unwrap();
         config.save(&git.shadow_dir).unwrap();
 
@@ -217,7 +229,7 @@ mod tests {
 
         std::fs::write(git.root.join("local.md"), "# Local\n").unwrap();
         config
-            .add_phantom("local.md".to_string(), ExcludeMode::None)
+            .add_phantom("local.md".to_string(), ExcludeMode::None, false)
             .unwrap();
 
         config.save(&git.shadow_dir).unwrap();

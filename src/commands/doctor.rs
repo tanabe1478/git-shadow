@@ -106,7 +106,14 @@ fn check_config_integrity(git: &GitRepo, config: &ShadowConfig, issues: &mut Vec
             }
             FileType::Phantom => {
                 let worktree_path = git.root.join(file_path);
-                if !worktree_path.exists() {
+                if entry.is_directory {
+                    if !worktree_path.is_dir() {
+                        issues.push(format!(
+                            "{} (phantom dir) does not exist in working tree",
+                            file_path
+                        ));
+                    }
+                } else if !worktree_path.exists() {
                     issues.push(format!(
                         "{} (phantom) does not exist in working tree",
                         file_path
@@ -328,6 +335,56 @@ mod tests {
 
         assert!(!warnings.is_empty());
         assert!(warnings.iter().any(|w| w.contains("stale lockfile")));
+    }
+
+    #[test]
+    fn test_config_integrity_phantom_dir_missing() {
+        let (_dir, git) = make_test_repo();
+        let mut config = ShadowConfig::new();
+
+        // Register phantom directory but don't create the directory
+        config
+            .add_phantom(
+                ".claude".to_string(),
+                crate::config::ExcludeMode::None,
+                true,
+            )
+            .unwrap();
+        config.save(&git.shadow_dir).unwrap();
+
+        let mut issues = Vec::new();
+        super::check_config_integrity(&git, &config, &mut issues);
+
+        assert!(
+            issues.iter().any(|i| i.contains("phantom dir")),
+            "Should report missing phantom directory, got: {:?}",
+            issues
+        );
+    }
+
+    #[test]
+    fn test_config_integrity_phantom_dir_present() {
+        let (_dir, git) = make_test_repo();
+        let mut config = ShadowConfig::new();
+
+        std::fs::create_dir_all(git.root.join(".claude")).unwrap();
+        config
+            .add_phantom(
+                ".claude".to_string(),
+                crate::config::ExcludeMode::None,
+                true,
+            )
+            .unwrap();
+        config.save(&git.shadow_dir).unwrap();
+
+        let mut issues = Vec::new();
+        super::check_config_integrity(&git, &config, &mut issues);
+
+        assert!(
+            issues.is_empty(),
+            "Should have no issues when directory exists, got: {:?}",
+            issues
+        );
     }
 
     #[test]

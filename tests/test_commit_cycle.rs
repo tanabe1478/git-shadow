@@ -122,6 +122,7 @@ fn test_full_phantom_commit_cycle() {
         .add_phantom(
             "local-notes.md".to_string(),
             git_shadow::config::ExcludeMode::None,
+            false,
         )
         .unwrap();
     config.save(&git.shadow_dir).unwrap();
@@ -207,6 +208,197 @@ fn test_pre_commit_rollback_on_error() {
         content, "# Team\n# My shadow\n",
         "Shadow content should be preserved after failed pre-commit"
     );
+}
+
+#[test]
+fn test_full_phantom_directory_commit_cycle() {
+    let repo = common::TestRepo::new();
+
+    // 1. Create initial file and commit
+    repo.create_file("README.md", "# Project\n");
+    repo.commit("initial commit");
+
+    let git = GitRepo::discover(&repo.root).unwrap();
+
+    // 2. Install shadow
+    repo.init_shadow();
+    install_hooks_for_test(&git);
+
+    // 3. Create phantom directory with files
+    repo.create_dir(".claude");
+    repo.create_file(".claude/settings.json", r#"{"key": "value"}"#);
+    repo.create_file(".claude/notes.md", "# My Notes\n");
+
+    // 4. Register as directory phantom
+    let mut config = ShadowConfig::new();
+    config
+        .add_phantom(
+            ".claude".to_string(),
+            git_shadow::config::ExcludeMode::None,
+            true,
+        )
+        .unwrap();
+    config.save(&git.shadow_dir).unwrap();
+
+    // 5. Stage the directory files (simulating accidental git add)
+    std::process::Command::new("git")
+        .args(["add", ".claude/"])
+        .current_dir(&git.root)
+        .output()
+        .unwrap();
+
+    // 6. Run pre-commit hook
+    hooks::pre_commit::handle(&git).unwrap();
+
+    // Verify: directory still exists in worktree
+    assert!(
+        git.root.join(".claude").is_dir(),
+        "Directory should still exist after pre-commit"
+    );
+    assert!(
+        git.root.join(".claude/settings.json").exists(),
+        "Files inside directory should still exist"
+    );
+
+    // Verify: no stash entries for the directory
+    let stash_files: Vec<_> = std::fs::read_dir(git.shadow_dir.join("stash"))
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+        .collect();
+    assert!(
+        stash_files.is_empty(),
+        "No stash entries should exist for directory phantom"
+    );
+
+    // 7. Commit
+    std::process::Command::new("git")
+        .args([
+            "commit",
+            "-m",
+            "some commit",
+            "--no-verify",
+            "--allow-empty",
+        ])
+        .current_dir(&git.root)
+        .output()
+        .unwrap();
+
+    // 8. Run post-commit hook
+    hooks::post_commit::handle(&git).unwrap();
+
+    // Verify: directory still exists
+    assert!(
+        git.root.join(".claude").is_dir(),
+        "Directory should still exist after post-commit"
+    );
+    assert!(
+        git.root.join(".claude/settings.json").exists(),
+        "Files inside should still exist after post-commit"
+    );
+
+    // Verify: .claude/ files are NOT in the commit
+    let show_result = git.show_file("HEAD", ".claude/settings.json");
+    assert!(
+        show_result.is_err(),
+        "Directory phantom files should NOT be in the commit"
+    );
+
+    // Verify: lock is released
+    assert!(
+        matches!(
+            lock::check_lock(&git.shadow_dir).unwrap(),
+            lock::LockStatus::Free
+        ),
+        "Lock should be released after post-commit"
+    );
+}
+
+#[test]
+fn test_mixed_overlay_and_phantom_directory() {
+    let repo = common::TestRepo::new();
+
+    // 1. Create initial file and commit
+    repo.create_file("CLAUDE.md", "# Team\n");
+    repo.commit("initial commit");
+
+    let git = GitRepo::discover(&repo.root).unwrap();
+
+    // 2. Install shadow
+    repo.init_shadow();
+    install_hooks_for_test(&git);
+
+    // 3. Add overlay
+    let commit = git.head_commit().unwrap();
+    let baseline_content = git.show_file("HEAD", "CLAUDE.md").unwrap();
+    let encoded = path::encode_path("CLAUDE.md");
+    fs_util::atomic_write(
+        &git.shadow_dir.join("baselines").join(&encoded),
+        &baseline_content,
+    )
+    .unwrap();
+    let mut config = ShadowConfig::new();
+    config.add_overlay("CLAUDE.md".to_string(), commit).unwrap();
+
+    // 4. Add directory phantom
+    repo.create_dir(".claude");
+    repo.create_file(".claude/config.json", r#"{"debug": true}"#);
+    config
+        .add_phantom(
+            ".claude".to_string(),
+            git_shadow::config::ExcludeMode::None,
+            true,
+        )
+        .unwrap();
+    config.save(&git.shadow_dir).unwrap();
+
+    // 5. Add shadow changes to overlay
+    std::fs::write(git.root.join("CLAUDE.md"), "# Team\n# My personal notes\n").unwrap();
+
+    // 6. Stage both
+    git.add("CLAUDE.md").unwrap();
+    std::process::Command::new("git")
+        .args(["add", ".claude/"])
+        .current_dir(&git.root)
+        .output()
+        .unwrap();
+
+    // 7. Run pre-commit
+    hooks::pre_commit::handle(&git).unwrap();
+
+    // Verify: overlay stashed and baselined
+    let wt_content = std::fs::read_to_string(git.root.join("CLAUDE.md")).unwrap();
+    assert_eq!(wt_content, "# Team\n", "Overlay should show baseline");
+
+    let stash_content =
+        std::fs::read_to_string(git.shadow_dir.join("stash").join("CLAUDE.md")).unwrap();
+    assert_eq!(
+        stash_content, "# Team\n# My personal notes\n",
+        "Overlay shadow should be stashed"
+    );
+
+    // Verify: directory phantom NOT stashed, still in worktree
+    assert!(git.root.join(".claude").is_dir());
+
+    // 8. Commit
+    std::process::Command::new("git")
+        .args(["commit", "-m", "update", "--no-verify"])
+        .current_dir(&git.root)
+        .output()
+        .unwrap();
+
+    // 9. Post-commit
+    hooks::post_commit::handle(&git).unwrap();
+
+    // Verify: overlay shadow restored
+    let wt_after = std::fs::read_to_string(git.root.join("CLAUDE.md")).unwrap();
+    assert_eq!(
+        wt_after, "# Team\n# My personal notes\n",
+        "Overlay shadow should be restored"
+    );
+
+    // Verify: directory phantom untouched
+    assert!(git.root.join(".claude/config.json").exists());
 }
 
 fn install_hooks_for_test(git: &GitRepo) {

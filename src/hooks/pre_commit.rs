@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use colored::Colorize;
 
-use crate::config::{FileType, ShadowConfig};
+use crate::config::{FileEntry, FileType, ShadowConfig};
 use crate::error::ShadowError;
 use crate::git::GitRepo;
 use crate::lock;
@@ -167,7 +167,7 @@ fn process_files(
                 process_overlay(git, file_path, tx)?;
             }
             FileType::Phantom => {
-                process_phantom(git, file_path, tx)?;
+                process_phantom(git, file_path, entry, tx)?;
             }
         }
     }
@@ -202,7 +202,18 @@ fn process_overlay(git: &GitRepo, file_path: &str, tx: &mut PreCommitTransaction
     Ok(())
 }
 
-fn process_phantom(git: &GitRepo, file_path: &str, tx: &mut PreCommitTransaction) -> Result<()> {
+fn process_phantom(
+    git: &GitRepo,
+    file_path: &str,
+    entry: &FileEntry,
+    tx: &mut PreCommitTransaction,
+) -> Result<()> {
+    if entry.is_directory {
+        // Directory phantoms: no stash needed, just unstage
+        git.unstage_phantom(file_path)?;
+        return Ok(());
+    }
+
     let encoded = path::encode_path(file_path);
     let worktree_path = git.root.join(file_path);
     let stash_path = git.shadow_dir.join("stash").join(&encoded);
@@ -317,7 +328,7 @@ mod tests {
         // Create phantom file
         std::fs::write(git.root.join("local.md"), "# Local\n").unwrap();
         config
-            .add_phantom("local.md".to_string(), ExcludeMode::None)
+            .add_phantom("local.md".to_string(), ExcludeMode::None, false)
             .unwrap();
         config.save(&git.shadow_dir).unwrap();
 
@@ -409,6 +420,50 @@ mod tests {
         assert!(result.is_err());
         let err_msg = format!("{}", result.unwrap_err());
         assert!(err_msg.contains("baseline missing"));
+    }
+
+    #[test]
+    fn test_phantom_directory_skips_stash() {
+        let (_dir, git) = make_test_repo();
+        let mut config = ShadowConfig::new();
+
+        // Create phantom directory with files inside
+        std::fs::create_dir_all(git.root.join(".claude")).unwrap();
+        std::fs::write(git.root.join(".claude/settings.json"), r#"{"key": "val"}"#).unwrap();
+        std::fs::write(git.root.join(".claude/notes.md"), "# Notes\n").unwrap();
+
+        config
+            .add_phantom(".claude".to_string(), ExcludeMode::None, true)
+            .unwrap();
+        config.save(&git.shadow_dir).unwrap();
+
+        // Stage the directory files
+        std::process::Command::new("git")
+            .args(["add", ".claude/"])
+            .current_dir(&git.root)
+            .output()
+            .unwrap();
+
+        handle(&git).unwrap();
+
+        // Directory should still exist in worktree
+        assert!(git.root.join(".claude").is_dir());
+        assert!(git.root.join(".claude/settings.json").exists());
+        assert!(git.root.join(".claude/notes.md").exists());
+
+        // No stash entry for the directory
+        let stash_dir = git.shadow_dir.join("stash");
+        let stash_files: Vec<_> = std::fs::read_dir(&stash_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+            .collect();
+        assert!(
+            stash_files.is_empty(),
+            "No stash entries should exist for directory phantoms"
+        );
+
+        lock::release_lock(&git.shadow_dir).unwrap();
     }
 
     #[test]

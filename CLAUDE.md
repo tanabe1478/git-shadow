@@ -13,6 +13,7 @@
 |------|-------------|
 | **overlay** | Layer local changes on top of an existing tracked file |
 | **phantom** | A file that exists only locally and is never committed |
+| **phantom dir** | A directory that exists only locally (exclude-only management, no stash/restore) |
 
 ## Architecture
 
@@ -71,7 +72,7 @@ Nested paths are URL-encoded for flat storage in `baselines/` and `stash/`:
 
 ```bash
 cargo build
-cargo test                      # 146 tests (143 unit + 3 E2E)
+cargo test                      # 164 tests (159 unit + 5 E2E)
 cargo clippy -- -D warnings     # Must pass with zero warnings
 cargo fmt --check               # Must pass
 ```

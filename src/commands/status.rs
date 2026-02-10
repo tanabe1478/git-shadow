@@ -99,7 +99,12 @@ pub fn run() -> Result<()> {
                 println!();
             }
             FileType::Phantom => {
-                println!("  {} (phantom)", file_path);
+                let label = if entry.is_directory {
+                    "phantom dir"
+                } else {
+                    "phantom"
+                };
+                println!("  {} ({})", file_path, label);
                 match entry.exclude_mode {
                     crate::config::ExcludeMode::GitInfoExclude => {
                         println!("    exclude: .git/info/exclude");
@@ -109,7 +114,16 @@ pub fn run() -> Result<()> {
                     }
                 }
                 let worktree_path = git.root.join(file_path);
-                if worktree_path.exists() {
+                if entry.is_directory {
+                    if worktree_path.is_dir() {
+                        let count = std::fs::read_dir(&worktree_path)
+                            .map(|entries| entries.count())
+                            .unwrap_or(0);
+                        println!("    contents: {} entries", count);
+                    } else {
+                        println!("{}", "    warning: directory does not exist".yellow());
+                    }
+                } else if worktree_path.exists() {
                     let metadata = std::fs::metadata(&worktree_path)?;
                     println!("    file size: {}", format_size(metadata.len()));
                 } else {
