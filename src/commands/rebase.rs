@@ -2,6 +2,7 @@ use anyhow::{bail, Result};
 use colored::Colorize;
 
 use crate::config::{FileType, ShadowConfig};
+use crate::error::ShadowError;
 use crate::fs_util;
 use crate::git::GitRepo;
 use crate::merge;
@@ -10,6 +11,11 @@ use crate::path;
 pub fn run(file: Option<&str>) -> Result<()> {
     let git = GitRepo::discover(&std::env::current_dir()?)?;
     let mut config = ShadowConfig::load(&git.shadow_dir)?;
+
+    if config.suspended {
+        return Err(ShadowError::Suspended.into());
+    }
+
     let head = git.head_commit()?;
 
     if config.files.is_empty() {
@@ -51,7 +57,7 @@ pub fn run(file: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-fn rebase_file(
+pub(crate) fn rebase_file(
     git: &GitRepo,
     config: &mut ShadowConfig,
     file_path: &str,
@@ -80,7 +86,14 @@ fn rebase_file(
 
     // Check if baseline actually changed
     if old_baseline == new_baseline {
-        println!("{}: baseline has not changed", file_path);
+        // Content is the same, but update baseline_commit to suppress drift warnings
+        if let Some(entry) = config.files.get_mut(file_path) {
+            entry.baseline_commit = Some(new_head.to_string());
+        }
+        println!(
+            "{}: baseline content unchanged (commit ref updated)",
+            file_path
+        );
         return Ok(());
     }
 
@@ -292,6 +305,69 @@ mod tests {
         assert!(!result.has_conflicts);
         assert!(result.content.contains("line2 updated"));
         assert!(result.content.contains("my addition"));
+    }
+
+    #[test]
+    fn test_rebase_no_content_change_updates_commit() {
+        let (_dir, git) = make_test_repo();
+        let old_commit = git.head_commit().unwrap();
+        let mut config = ShadowConfig::new();
+
+        // Setup overlay with current baseline
+        let baseline_content =
+            String::from_utf8_lossy(&git.show_file("HEAD", "CLAUDE.md").unwrap()).to_string();
+        let encoded = path::encode_path("CLAUDE.md");
+        fs_util::atomic_write(
+            &git.shadow_dir.join("baselines").join(&encoded),
+            baseline_content.as_bytes(),
+        )
+        .unwrap();
+        config
+            .add_overlay("CLAUDE.md".to_string(), old_commit.clone())
+            .unwrap();
+        config.save(&git.shadow_dir).unwrap();
+
+        // Add shadow changes to working tree
+        std::fs::write(git.root.join("CLAUDE.md"), "# Team\n# My shadow\n").unwrap();
+
+        // Commit a different file so HEAD advances but CLAUDE.md content is unchanged
+        std::fs::write(git.root.join("other.txt"), "other content").unwrap();
+        std::process::Command::new("git")
+            .args(["add", "other.txt"])
+            .current_dir(&git.root)
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["commit", "-m", "add other file"])
+            .current_dir(&git.root)
+            .output()
+            .unwrap();
+
+        let new_head = git.head_commit().unwrap();
+        assert_ne!(old_commit, new_head, "HEAD should have advanced");
+
+        // Restore shadow content in working tree
+        std::fs::write(git.root.join("CLAUDE.md"), "# Team\n# My shadow\n").unwrap();
+
+        // Rebase should detect content is unchanged but update baseline_commit
+        super::rebase_file(&git, &mut config, "CLAUDE.md", &new_head).unwrap();
+
+        // Verify baseline_commit was updated to new HEAD
+        let entry = config.get("CLAUDE.md").unwrap();
+        assert_eq!(
+            entry.baseline_commit.as_ref().unwrap(),
+            &new_head,
+            "baseline_commit should be updated to new HEAD"
+        );
+
+        // Verify baseline file content is unchanged
+        let baseline =
+            std::fs::read_to_string(git.shadow_dir.join("baselines").join(&encoded)).unwrap();
+        assert_eq!(baseline, "# Team\n");
+
+        // Verify working tree is unchanged (shadow changes preserved)
+        let wt = std::fs::read_to_string(git.root.join("CLAUDE.md")).unwrap();
+        assert_eq!(wt, "# Team\n# My shadow\n");
     }
 
     /// Helper to rebase a file (bypasses cwd discovery)

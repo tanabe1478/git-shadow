@@ -47,6 +47,14 @@ pub fn run() -> Result<()> {
         return Ok(());
     }
 
+    if config.suspended {
+        println!(
+            "{}",
+            "  status: SUSPENDED (run `git-shadow resume` to restore shadow changes)".yellow()
+        );
+        println!();
+    }
+
     println!("managed files:");
     println!();
 
@@ -74,24 +82,37 @@ pub fn run() -> Result<()> {
                     let (added, removed) = diff_stats(&baseline, &current);
                     println!("    shadow changes: +{} lines / -{} lines", added, removed);
 
-                    // Check baseline drift
+                    // Check baseline drift (hash mismatch + content comparison)
                     if let Some(ref commit) = entry.baseline_commit {
                         if let Ok(head) = git.head_commit() {
                             if *commit != head {
-                                println!(
-                                    "{}",
-                                    format!(
-                                        "    warning: baseline is outdated ({} -> {})",
-                                        &commit[..7.min(commit.len())],
-                                        &head[..7.min(head.len())]
-                                    )
-                                    .yellow()
-                                );
-                                println!(
-                                    "{}",
-                                    format!("    -> Run `git-shadow rebase {}`", file_path)
+                                // Hash differs — check if file content actually changed
+                                let content_changed = git
+                                    .show_file("HEAD", file_path)
+                                    .ok()
+                                    .map(|head_content| {
+                                        let baseline_bytes =
+                                            std::fs::read(&baseline_path).unwrap_or_default();
+                                        baseline_bytes != head_content
+                                    })
+                                    .unwrap_or(false);
+
+                                if content_changed {
+                                    println!(
+                                        "{}",
+                                        format!(
+                                            "    warning: baseline is outdated ({} -> {})",
+                                            &commit[..7.min(commit.len())],
+                                            &head[..7.min(head.len())]
+                                        )
                                         .yellow()
-                                );
+                                    );
+                                    println!(
+                                        "{}",
+                                        format!("    -> Run `git-shadow rebase {}`", file_path)
+                                            .yellow()
+                                    );
+                                }
                             }
                         }
                     }

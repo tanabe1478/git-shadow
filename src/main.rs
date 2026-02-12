@@ -20,6 +20,8 @@ fn main() -> Result<()> {
         Commands::Diff { file } => commands::diff::run(file.as_deref())?,
         Commands::Rebase { file } => commands::rebase::run(file.as_deref())?,
         Commands::Restore { file } => commands::restore::run(file.as_deref())?,
+        Commands::Suspend => commands::suspend::run()?,
+        Commands::Resume => commands::resume::run()?,
         Commands::Doctor => commands::doctor::run()?,
         Commands::Hook { hook_name } => commands::hook::run(&hook_name)?,
     }

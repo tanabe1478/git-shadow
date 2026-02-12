@@ -58,6 +58,12 @@ pub fn handle(git: &GitRepo) -> Result<()> {
 
     let config = ShadowConfig::load(&git.shadow_dir)?;
 
+    // Block commits while suspended
+    if config.suspended {
+        lock::release_lock(&git.shadow_dir)?;
+        return Err(ShadowError::Suspended.into());
+    }
+
     if config.files.is_empty() {
         lock::release_lock(&git.shadow_dir)?;
         return Ok(());
@@ -130,14 +136,28 @@ fn run_soft_checks(git: &GitRepo, config: &ShadowConfig) {
                 (&entry.baseline_commit, &head)
             {
                 if baseline_commit != current_head {
-                    eprintln!(
-                        "{}",
-                        format!(
-                            "warning: baseline for {} is outdated. Run `git-shadow rebase {}`",
-                            file_path, file_path
-                        )
-                        .yellow()
-                    );
+                    // Hash differs — check if file content actually changed
+                    let encoded = path::encode_path(file_path);
+                    let baseline_path = git.shadow_dir.join("baselines").join(&encoded);
+                    let content_changed = git
+                        .show_file("HEAD", file_path)
+                        .ok()
+                        .map(|head_content| {
+                            let baseline_bytes = std::fs::read(&baseline_path).unwrap_or_default();
+                            baseline_bytes != head_content
+                        })
+                        .unwrap_or(false);
+
+                    if content_changed {
+                        eprintln!(
+                            "{}",
+                            format!(
+                                "warning: baseline for {} is outdated. Run `git-shadow rebase {}`",
+                                file_path, file_path
+                            )
+                            .yellow()
+                        );
+                    }
                 }
             }
         }

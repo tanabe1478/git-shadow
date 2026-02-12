@@ -60,6 +60,12 @@ pub enum Commands {
         file: Option<String>,
     },
 
+    /// Suspend shadow changes for branch switching
+    Suspend,
+
+    /// Resume suspended shadow changes
+    Resume,
+
     /// Diagnose hooks and configuration
     Doctor,
 

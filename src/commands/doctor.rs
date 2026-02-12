@@ -31,6 +31,9 @@ pub fn run() -> Result<()> {
     // 5. Check lock
     check_lock(&git, &mut warnings);
 
+    // 6. Check suspended state
+    check_suspended(&config, &git, &mut warnings);
+
     // Print results
     if issues.is_empty() && warnings.is_empty() {
         println!("{}", "all checks passed".green());
@@ -138,6 +141,18 @@ fn check_stash(git: &GitRepo, warnings: &mut Vec<String>) {
 
         if has_files {
             warnings.push("stash has remaining files. Run `git-shadow restore`".to_string());
+        }
+    }
+}
+
+fn check_suspended(config: &ShadowConfig, git: &GitRepo, warnings: &mut Vec<String>) {
+    if config.suspended {
+        warnings.push("shadow changes are suspended. Run `git-shadow resume`".to_string());
+
+        // Check if suspended directory exists and has files
+        let suspended_dir = git.shadow_dir.join("suspended");
+        if !suspended_dir.exists() {
+            warnings.push("suspended directory is missing (state may be corrupted)".to_string());
         }
     }
 }
