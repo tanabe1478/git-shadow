@@ -71,6 +71,12 @@ fn resume_overlay(
     let baseline_path = git.shadow_dir.join("baselines").join(&encoded);
     let worktree_path = git.root.join(file_path);
 
+    // Ensure parent directory exists (may be missing after branch switch)
+    if let Some(parent) = worktree_path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create parent directory for {}", file_path))?;
+    }
+
     if !suspend_path.exists() {
         eprintln!(
             "{}",
