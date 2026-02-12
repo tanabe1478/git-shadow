@@ -139,6 +139,61 @@ If there's a conflict, standard conflict markers (`<<<<<<<`, `=======`, `>>>>>>>
 git-shadow rebase
 ```
 
+## Branch Switching
+
+Overlay changes modify the working tree, which can block `git checkout`. Use `suspend` and `resume` to cleanly switch branches.
+
+### Suspend
+
+```bash
+# Save shadow changes and restore baselines
+git-shadow suspend
+```
+
+This:
+1. Saves each overlay's working tree content to `.git/shadow/suspended/`
+2. Restores baseline content to the working tree
+3. Saves each phantom file to `.git/shadow/suspended/` and removes it from the working tree
+4. Sets the config to "suspended" state
+
+The working tree is now clean — you can switch branches freely.
+
+### Resume
+
+```bash
+# After switching branches, restore shadow changes
+git-shadow resume
+```
+
+If the baseline has not changed (same branch or file unchanged), suspended content is restored directly. If the baseline has changed (different branch), a 3-way merge is performed:
+
+1. Old baseline (from before suspend)
+2. Suspended content (your shadow changes)
+3. New HEAD content (current branch's version)
+
+If there's a conflict, standard conflict markers are written for manual resolution.
+
+### Typical Workflow
+
+```bash
+# Working on feature branch with shadow changes
+git-shadow suspend
+git checkout main
+git-shadow resume          # shadow changes re-applied to main's content
+
+# Switch back
+git-shadow suspend
+git checkout feature
+git-shadow resume          # shadow changes restored
+```
+
+### Restrictions While Suspended
+
+- `git commit` is blocked (pre-commit hook will error)
+- `git-shadow diff` and `git-shadow rebase` are blocked
+- `git-shadow status` shows "SUSPENDED" state
+- `git-shadow doctor` reports suspended state as a warning
+
 ## Recovery
 
 ### Automatic Recovery
@@ -188,7 +243,9 @@ All data lives inside `.git/shadow/`, which is automatically excluded from commi
 ├── baselines/           # Baseline snapshots (URL-encoded filenames)
 │   └── docker-compose.yml
 │   └── scripts%2Flocal-setup.sh
-└── stash/               # Temporary stash during commits
+├── stash/               # Temporary stash during commits
+│   └── ...
+└── suspended/           # Shadow changes saved during suspend (branch switching)
     └── ...
 ```
 

@@ -76,6 +76,8 @@ git show HEAD:docker-compose.yml  # クリーンなチーム用の内容のみ
 | `git-shadow diff [file]` | shadow 変更の差分を表示 |
 | `git-shadow rebase [file]` | ベースラインを更新し shadow 変更を再適用 (3-way merge) |
 | `git-shadow restore [file]` | 中断されたコミットやクラッシュからの復旧 |
+| `git-shadow suspend` | ブランチ切替のために shadow 変更を一時退避 |
+| `git-shadow resume` | 退避した shadow 変更を復元（必要に応じて 3-way merge） |
 | `git-shadow doctor` | hooks・設定の整合性・残留状態を診断 |
 
 ## 仕組み

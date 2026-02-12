@@ -139,6 +139,61 @@ rebase は 3-way merge を実行します:
 git-shadow rebase
 ```
 
+## ブランチ切替
+
+overlay の変更はワーキングツリーを変更するため、`git checkout` がブロックされることがあります。`suspend` と `resume` を使ってクリーンにブランチを切り替えられます。
+
+### Suspend
+
+```bash
+# shadow 変更を退避してベースラインを復元
+git-shadow suspend
+```
+
+以下の処理が行われます:
+1. 各 overlay のワーキングツリーの内容を `.git/shadow/suspended/` に保存
+2. ベースラインの内容をワーキングツリーに復元
+3. 各 phantom ファイルを `.git/shadow/suspended/` に保存し、ワーキングツリーから削除
+4. config を "suspended" 状態に設定
+
+ワーキングツリーがクリーンになるので、自由にブランチを切り替えられます。
+
+### Resume
+
+```bash
+# ブランチ切替後、shadow 変更を復元
+git-shadow resume
+```
+
+ベースラインが変わっていない場合（同じブランチ、またはファイル内容が同一）は、退避した内容がそのまま復元されます。ベースラインが変わっている場合（別ブランチ）は、3-way merge が実行されます:
+
+1. 旧ベースライン（suspend 前のもの）
+2. 退避した内容（あなたの shadow 変更）
+3. 新しい HEAD の内容（現在のブランチのバージョン）
+
+コンフリクトが発生した場合は、標準的なコンフリクトマーカーが書き込まれます。
+
+### 典型的なワークフロー
+
+```bash
+# feature ブランチで shadow 変更を加えて作業中
+git-shadow suspend
+git checkout main
+git-shadow resume          # main の内容に shadow 変更を再適用
+
+# 元のブランチに戻る
+git-shadow suspend
+git checkout feature
+git-shadow resume          # shadow 変更を復元
+```
+
+### Suspended 中の制限事項
+
+- `git commit` はブロックされます（pre-commit hook がエラーを返す）
+- `git-shadow diff` と `git-shadow rebase` はブロックされます
+- `git-shadow status` は "SUSPENDED" 状態を表示します
+- `git-shadow doctor` は suspended 状態を警告として報告します
+
 ## リカバリ
 
 ### 自動検出
@@ -188,7 +243,9 @@ git-shadow doctor
 ├── baselines/           # ベースラインのスナップショット (URL エンコードされたファイル名)
 │   └── docker-compose.yml
 │   └── scripts%2Flocal-setup.sh
-└── stash/               # コミット中の一時退避先
+├── stash/               # コミット中の一時退避先
+│   └── ...
+└── suspended/           # suspend 時に退避した shadow 変更（ブランチ切替用）
     └── ...
 ```
 

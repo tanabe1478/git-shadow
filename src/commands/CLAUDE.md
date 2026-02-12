@@ -13,6 +13,8 @@ User-facing CLI commands. Each file corresponds to one subcommand and exposes a 
 | `git-shadow diff [file]` | `diff.rs` | Shows shadow changes as unified diff |
 | `git-shadow rebase [file]` | `rebase.rs` | Updates baseline via 3-way merge |
 | `git-shadow restore [file]` | `restore.rs` | Recovers from interrupted commits |
+| `git-shadow suspend` | `suspend.rs` | Suspends shadow changes for branch switching |
+| `git-shadow resume` | `resume.rs` | Resumes suspended shadow changes (with 3-way merge) |
 | `git-shadow doctor` | `doctor.rs` | Diagnoses hooks, config, stale state |
 | `git-shadow hook <name>` | `hook.rs` | Internal dispatcher called from hook scripts |
 
@@ -48,10 +50,18 @@ Delegates to `merge::three_way_merge()`. The three inputs are:
 
 On conflict, standard markers are written and the user resolves manually.
 
+### suspend.rs: Branch Switching Support
+
+Saves shadow changes to `.git/shadow/suspended/` (separate from `stash/` which is for commit cycles). For overlays, restores baseline to working tree. For phantoms (non-directory), removes file from working tree. Guards: already suspended, lock held, stash remnants. Sets `config.suspended = true`.
+
+### resume.rs: Restore Suspended Changes
+
+Restores suspended shadow changes. If baseline is unchanged, restores directly. If baseline changed (different branch), performs 3-way merge via `merge::three_way_merge()`. Creates parent directories before writing (may be missing after branch switch). Cleans up `suspended/` directory and sets `config.suspended = false`.
+
 ### hook.rs: Hidden Command
 
 The `hook` subcommand is `#[command(hide = true)]` in clap -- it doesn't appear in `--help`. It's only called by the hook scripts installed by `install`.
 
 ### doctor.rs: Diagnostic Categories
 
-Checks are split into **issues** (red, things that are broken) and **warnings** (yellow, things that need attention). Checks include: hook existence/permissions/content, competing hook managers (Husky, pre-commit, lefthook), config integrity, stash remnants, stale locks.
+Checks are split into **issues** (red, things that are broken) and **warnings** (yellow, things that need attention). Checks include: hook existence/permissions/content, competing hook managers (Husky, pre-commit, lefthook), config integrity, stash remnants, stale locks, suspended state.

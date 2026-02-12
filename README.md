@@ -76,6 +76,8 @@ git show HEAD:docker-compose.yml  # clean, team-only content
 | `git-shadow diff [file]` | Show shadow changes as a unified diff |
 | `git-shadow rebase [file]` | Update baseline after upstream changes (3-way merge) |
 | `git-shadow restore [file]` | Recover from interrupted commits or crashes |
+| `git-shadow suspend` | Suspend shadow changes for branch switching |
+| `git-shadow resume` | Resume suspended shadow changes (with 3-way merge if needed) |
 | `git-shadow doctor` | Diagnose hooks, config integrity, and stale state |
 
 ## How It Works

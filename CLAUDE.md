@@ -48,6 +48,8 @@ src/
     diff.rs            # Show shadow changes as unified diff
     rebase.rs          # Update baseline with 3-way merge
     restore.rs         # Recover from interrupted commits
+    suspend.rs         # Suspend shadow changes for branch switching
+    resume.rs          # Resume suspended changes (with 3-way merge)
     doctor.rs          # Diagnose hooks, config, stale state
     hook.rs            # Dispatcher for `git-shadow hook <name>`
   hooks/
@@ -72,7 +74,7 @@ Nested paths are URL-encoded for flat storage in `baselines/` and `stash/`:
 
 ```bash
 cargo build
-cargo test                      # 164 tests (159 unit + 5 E2E)
+cargo test                      # 176 tests (171 unit + 5 E2E)
 cargo clippy -- -D warnings     # Must pass with zero warnings
 cargo fmt --check               # Must pass
 ```
