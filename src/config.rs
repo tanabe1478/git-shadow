@@ -39,6 +39,9 @@ pub struct FileEntry {
 pub struct ShadowConfig {
     pub version: u32,
     pub files: BTreeMap<String, FileEntry>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub suspended: bool,
 }
 
 impl Default for ShadowConfig {
@@ -46,6 +49,7 @@ impl Default for ShadowConfig {
         Self {
             version: 1,
             files: BTreeMap::new(),
+            suspended: false,
         }
     }
 }

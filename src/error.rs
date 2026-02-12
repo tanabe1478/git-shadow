@@ -47,6 +47,15 @@ pub enum ShadowError {
     #[error("git command failed: {command}\n{stderr}")]
     GitCommand { command: String, stderr: String },
 
+    #[error("shadow changes are already suspended")]
+    AlreadySuspended,
+
+    #[error("shadow changes are not suspended")]
+    NotSuspended,
+
+    #[error("operation not allowed while suspended. Run `git-shadow resume` first")]
+    Suspended,
+
     #[error("hooks not installed. Run `git-shadow install`")]
     HooksNotInstalled,
 

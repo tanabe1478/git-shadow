@@ -6,4 +6,6 @@ pub mod install;
 pub mod rebase;
 pub mod remove;
 pub mod restore;
+pub mod resume;
 pub mod status;
+pub mod suspend;

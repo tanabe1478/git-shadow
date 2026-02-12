@@ -2,12 +2,17 @@ use anyhow::Result;
 
 use crate::config::{FileEntry, FileType, ShadowConfig};
 use crate::diff_util;
+use crate::error::ShadowError;
 use crate::git::GitRepo;
 use crate::path;
 
 pub fn run(file: Option<&str>) -> Result<()> {
     let git = GitRepo::discover(&std::env::current_dir()?)?;
     let config = ShadowConfig::load(&git.shadow_dir)?;
+
+    if config.suspended {
+        return Err(ShadowError::Suspended.into());
+    }
 
     if config.files.is_empty() {
         println!("no managed files");
