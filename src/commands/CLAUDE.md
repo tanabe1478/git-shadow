@@ -12,7 +12,7 @@ User-facing CLI commands. Each file corresponds to one subcommand and exposes a 
 | `git-shadow status` | `status.rs` | Shows managed files, diff stats, warnings |
 | `git-shadow diff [file]` | `diff.rs` | Shows shadow changes as unified diff |
 | `git-shadow rebase [file]` | `rebase.rs` | Updates baseline via 3-way merge |
-| `git-shadow restore [file]` | `restore.rs` | Recovers from interrupted commits |
+| `git-shadow restore [file]` | `restore.rs` | Recovers from interrupted commits (fallback; stale locks are auto-recovered by pre-commit) |
 | `git-shadow suspend` | `suspend.rs` | Suspends shadow changes for branch switching |
 | `git-shadow resume` | `resume.rs` | Resumes suspended shadow changes (with 3-way merge) |
 | `git-shadow doctor` | `doctor.rs` | Diagnoses hooks, config, stale state |

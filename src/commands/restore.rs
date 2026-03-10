@@ -4,8 +4,9 @@ use crate::git::GitRepo;
 use crate::lock;
 use crate::path;
 
-pub fn run(file: Option<&str>) -> Result<()> {
-    let git = GitRepo::discover(&std::env::current_dir()?)?;
+/// Core restore logic: restores stashed files to working tree.
+/// Returns the list of restored file paths.
+pub fn restore_stash(git: &GitRepo, file: Option<&str>) -> Result<Vec<String>> {
     let stash_dir = git.shadow_dir.join("stash");
     let mut restored = Vec::new();
 
@@ -42,6 +43,14 @@ pub fn run(file: Option<&str>) -> Result<()> {
         }
     }
 
+    Ok(restored)
+}
+
+pub fn run(file: Option<&str>) -> Result<()> {
+    let git = GitRepo::discover(&std::env::current_dir()?)?;
+
+    let restored = restore_stash(&git, file)?;
+
     // Remove stale lock
     let lock_removed = if git.shadow_dir.join("lock").exists() {
         lock::release_lock(&git.shadow_dir)?;
@@ -63,6 +72,7 @@ pub fn run(file: Option<&str>) -> Result<()> {
         if lock_removed {
             println!("lockfile removed");
         }
+        println!("hint: you can now retry your commit");
     }
 
     Ok(())
@@ -123,7 +133,8 @@ mod tests {
         // Overwrite worktree with baseline
         std::fs::write(git.root.join("CLAUDE.md"), "# Team\n").unwrap();
 
-        restore_for_test(&git, None);
+        let restored = restore_stash(&git, None).unwrap();
+        assert_eq!(restored, vec!["CLAUDE.md"]);
 
         let content = std::fs::read_to_string(git.root.join("CLAUDE.md")).unwrap();
         assert_eq!(content, "# Shadow content\n");
@@ -142,7 +153,8 @@ mod tests {
         fs_util::atomic_write(&git.shadow_dir.join("stash").join("other.md"), b"# Other\n")
             .unwrap();
 
-        restore_for_test(&git, Some("CLAUDE.md"));
+        let restored = restore_stash(&git, Some("CLAUDE.md")).unwrap();
+        assert_eq!(restored, vec!["CLAUDE.md"]);
 
         // CLAUDE.md restored
         assert!(!git.shadow_dir.join("stash").join("CLAUDE.md").exists());
@@ -151,26 +163,10 @@ mod tests {
     }
 
     #[test]
-    fn test_removes_stale_lock() {
-        let (_dir, git) = make_test_repo();
-
-        // Create stale lock
-        std::fs::write(
-            git.shadow_dir.join("lock"),
-            "pid=999999\ntimestamp=2026-01-01T00:00:00+00:00",
-        )
-        .unwrap();
-
-        restore_for_test(&git, None);
-
-        assert!(!git.shadow_dir.join("lock").exists());
-    }
-
-    #[test]
     fn test_nothing_to_restore() {
         let (_dir, git) = make_test_repo();
-        // Should not error
-        restore_for_test(&git, None);
+        let restored = restore_stash(&git, None).unwrap();
+        assert!(restored.is_empty());
     }
 
     #[test]
@@ -184,45 +180,34 @@ mod tests {
         )
         .unwrap();
 
-        restore_for_test(&git, None);
+        let restored = restore_stash(&git, None).unwrap();
+        assert_eq!(restored, vec!["src/components/CLAUDE.md"]);
 
         let content = std::fs::read_to_string(git.root.join("src/components/CLAUDE.md")).unwrap();
         assert_eq!(content, "# Component\n");
     }
 
-    /// Helper that runs restore logic directly (bypassing cwd discovery)
-    fn restore_for_test(git: &GitRepo, file: Option<&str>) {
-        let stash_dir = git.shadow_dir.join("stash");
-        if stash_dir.exists() {
-            let entries: Vec<_> = std::fs::read_dir(&stash_dir)
-                .unwrap()
-                .filter_map(|e| e.ok())
-                .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
-                .collect();
+    #[test]
+    fn test_removes_stale_lock_via_run_helper() {
+        let (_dir, git) = make_test_repo();
 
-            for entry in entries {
-                let filename = entry.file_name();
-                let encoded = filename.to_string_lossy().to_string();
-                let normalized = path::decode_path(&encoded);
+        // Create stale lock
+        std::fs::write(
+            git.shadow_dir.join("lock"),
+            "pid=999999\ntimestamp=2026-01-01T00:00:00+00:00",
+        )
+        .unwrap();
 
-                if let Some(target) = file {
-                    if normalized != target {
-                        continue;
-                    }
-                }
+        // restore_stash doesn't remove lock (that's run()'s job)
+        // but we verify the stash restore works independently
+        let restored = restore_stash(&git, None).unwrap();
+        assert!(restored.is_empty());
 
-                let worktree_path = git.root.join(&normalized);
-                if let Some(parent) = worktree_path.parent() {
-                    std::fs::create_dir_all(parent).unwrap();
-                }
-                let content = std::fs::read(entry.path()).unwrap();
-                std::fs::write(&worktree_path, &content).unwrap();
-                std::fs::remove_file(entry.path()).unwrap();
-            }
-        }
+        // Lock is still there (restore_stash doesn't touch it)
+        assert!(git.shadow_dir.join("lock").exists());
 
-        if git.shadow_dir.join("lock").exists() {
-            lock::release_lock(&git.shadow_dir).unwrap();
-        }
+        // Clean up via release_lock
+        lock::release_lock(&git.shadow_dir).unwrap();
+        assert!(!git.shadow_dir.join("lock").exists());
     }
 }

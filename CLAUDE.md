@@ -21,7 +21,7 @@
 
 - **No git2 crate** -- Uses `std::process::Command` to shell out to git directly. Reasons: simpler builds (no libgit2/C dependency), better staging API coverage, debuggable by running the same commands manually. File count is small (1-10) so subprocess overhead is negligible.
 - **Atomic writes** -- All file mutations use tempfile + rename via `fs_util::atomic_write()` to prevent corruption.
-- **PID-based lockfile** -- Uses `libc::kill(pid, 0)` for stale lock detection.
+- **PID-based lockfile** -- Uses `libc::kill(pid, 0)` for stale lock detection. Stale locks are auto-recovered by pre-commit (no manual `restore` needed).
 - **PreCommitTransaction pattern** -- The pre-commit hook tracks state for rollback on failure.
 
 ### Module Structure

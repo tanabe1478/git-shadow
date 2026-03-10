@@ -93,6 +93,7 @@ All data is stored in `.git/shadow/` — inside `.git/`, so it's never committed
 - **Atomic writes**: File operations use temp-file-then-rename to prevent corruption
 - **Lockfile**: PID-based lock prevents concurrent operations
 - **Rollback**: Failed pre-commit operations are rolled back automatically
+- **Stale lock auto-recovery**: If a previous commit was interrupted (crash/kill), the next commit automatically recovers — no manual `restore` needed
 - **Recovery**: `git-shadow restore` recovers from any interrupted state
 
 ## Documentation

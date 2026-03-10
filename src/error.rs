@@ -68,3 +68,10 @@ pub enum ShadowError {
     #[error(transparent)]
     Json(#[from] serde_json::Error),
 }
+
+impl ShadowError {
+    /// Returns true if this error is a stale lock (dead process holding lock)
+    pub fn is_stale_lock(&self) -> bool {
+        matches!(self, ShadowError::StaleLock(_))
+    }
+}

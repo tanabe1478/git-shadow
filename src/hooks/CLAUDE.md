@@ -54,6 +54,6 @@ After `git pull`/`git merge`, compares stored baseline content with current HEAD
 
 ## Critical Invariants
 
-1. **Lock ownership**: pre-commit acquires, post-commit releases. If post-commit never runs (e.g., `--no-verify` or commit aborted), the lock becomes stale. `restore` and `doctor` handle this.
-2. **Stash must be empty before pre-commit**: If stash has files, a previous commit was interrupted. Pre-commit refuses to run to prevent data loss.
+1. **Lock ownership**: pre-commit acquires, post-commit releases. If post-commit never runs (e.g., `--no-verify` or commit aborted), the lock becomes stale. Pre-commit auto-recovers stale locks (restores stash, removes lock, re-acquires). Manual `restore` is only needed as a fallback.
+2. **Stash must be empty before pre-commit**: If stash has files and the lock is NOT stale, a previous commit was interrupted with the process still alive. Pre-commit refuses to run to prevent data loss.
 3. **No partial staging**: If an overlay file has both staged and unstaged changes (`git add -p`), pre-commit aborts because it cannot safely determine which content to stash.

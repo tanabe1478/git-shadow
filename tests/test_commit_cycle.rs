@@ -401,6 +401,105 @@ fn test_mixed_overlay_and_phantom_directory() {
     assert!(git.root.join(".claude/config.json").exists());
 }
 
+#[test]
+fn test_stale_lock_auto_recovery_during_pre_commit() {
+    let repo = common::TestRepo::new();
+
+    // 1. Create initial file and commit
+    repo.create_file("CLAUDE.md", "# Team\n");
+    repo.commit("initial commit");
+
+    let git = GitRepo::discover(&repo.root).unwrap();
+
+    // 2. Install shadow
+    repo.init_shadow();
+    install_hooks_for_test(&git);
+
+    // 3. Add overlay
+    let commit = git.head_commit().unwrap();
+    let baseline_content = git.show_file("HEAD", "CLAUDE.md").unwrap();
+    let encoded = path::encode_path("CLAUDE.md");
+    fs_util::atomic_write(
+        &git.shadow_dir.join("baselines").join(&encoded),
+        &baseline_content,
+    )
+    .unwrap();
+    let mut config = ShadowConfig::new();
+    config.add_overlay("CLAUDE.md".to_string(), commit).unwrap();
+    config.save(&git.shadow_dir).unwrap();
+
+    // 4. Add shadow changes
+    std::fs::write(git.root.join("CLAUDE.md"), "# Team\n# My personal notes\n").unwrap();
+
+    // 5. Simulate interrupted commit: stash shadow content + create stale lock
+    fs_util::atomic_write(
+        &git.shadow_dir.join("stash").join("CLAUDE.md"),
+        b"# Team\n# My personal notes\n",
+    )
+    .unwrap();
+    // Write baseline to worktree (as pre-commit would have done)
+    std::fs::write(git.root.join("CLAUDE.md"), "# Team\n").unwrap();
+    // Create stale lock with a dead PID
+    std::fs::write(
+        git.shadow_dir.join("lock"),
+        "pid=999999\ntimestamp=2026-01-01T00:00:00+00:00",
+    )
+    .unwrap();
+
+    // 6. Verify stale lock exists
+    assert!(git.shadow_dir.join("lock").exists());
+    assert!(git.shadow_dir.join("stash").join("CLAUDE.md").exists());
+
+    // 7. Run pre-commit hook — should auto-recover and succeed
+    hooks::pre_commit::handle(&git).unwrap();
+
+    // 8. Verify: working tree has baseline content (pre-commit did its job)
+    let wt_content = std::fs::read_to_string(git.root.join("CLAUDE.md")).unwrap();
+    assert_eq!(
+        wt_content, "# Team\n",
+        "Working tree should have baseline after auto-recovery + pre-commit"
+    );
+
+    // 9. Verify: stash has shadow content (freshly stashed by this pre-commit)
+    let stash_content =
+        std::fs::read_to_string(git.shadow_dir.join("stash").join("CLAUDE.md")).unwrap();
+    assert_eq!(
+        stash_content, "# Team\n# My personal notes\n",
+        "Stash should have shadow content"
+    );
+
+    // 10. Verify: lock is held (by current pre-commit, for post-commit to release)
+    assert!(
+        matches!(
+            lock::check_lock(&git.shadow_dir).unwrap(),
+            lock::LockStatus::HeldByUs
+        ),
+        "Lock should be held by current process after auto-recovery"
+    );
+
+    // 11. Complete the cycle: commit + post-commit
+    std::process::Command::new("git")
+        .args(["commit", "-m", "test commit", "--no-verify"])
+        .current_dir(&git.root)
+        .output()
+        .unwrap();
+    hooks::post_commit::handle(&git).unwrap();
+
+    // 12. Verify: shadow content restored, lock released
+    let wt_after = std::fs::read_to_string(git.root.join("CLAUDE.md")).unwrap();
+    assert_eq!(
+        wt_after, "# Team\n# My personal notes\n",
+        "Shadow content should be restored after post-commit"
+    );
+    assert!(
+        matches!(
+            lock::check_lock(&git.shadow_dir).unwrap(),
+            lock::LockStatus::Free
+        ),
+        "Lock should be released after post-commit"
+    );
+}
+
 fn install_hooks_for_test(git: &GitRepo) {
     let hooks_dir = git.git_dir.join("hooks");
     std::fs::create_dir_all(&hooks_dir).unwrap();

@@ -196,9 +196,20 @@ git-shadow resume          # shadow 変更を復元
 
 ## リカバリ
 
-### 自動検出
+### Stale Lock の自動リカバリ
 
-コミットが中断された場合（エディタを閉じた、commit-msg hook の失敗など）、shadow 変更は退避されたまま復元されません。次回の git-shadow コマンド実行時に検出されます:
+前回のコミットが中断された場合（プロセスの kill、クラッシュなど）、stale lockfile が残ることがあります。**pre-commit hook が自動的にこの状態を検出してリカバリ**するため、手動での介入は不要です。警告メッセージが表示されますが、コミットは正常に続行されます:
+
+```
+warning: stale lock detected, auto-recovering...
+  restored: docker-compose.yml
+```
+
+単純にコミットを再実行するだけで成功します。
+
+### Stash 残留
+
+コミットがプロセス生存中に中断された場合（エディタを閉じた、commit-msg hook の失敗など）、次回の pre-commit が stash の残留ファイルを検出してコミットをブロックします:
 
 ```
 warning: stash has remaining files (a previous commit may have been interrupted)
@@ -219,6 +230,7 @@ git-shadow restore docker-compose.yml
 - 退避ファイルをワーキングツリーに復元
 - stale lockfile を削除
 - stash ディレクトリをクリーンアップ
+- コミットの再実行を案内するヒントメッセージを表示
 
 ## 診断
 

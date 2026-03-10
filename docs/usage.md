@@ -196,9 +196,20 @@ git-shadow resume          # shadow changes restored
 
 ## Recovery
 
-### Automatic Recovery
+### Stale Lock Auto-Recovery
 
-If a commit is interrupted (e.g., commit message editor closed, commit-msg hook failed), shadow changes are stashed but not restored. The next git-shadow command will detect this and prompt you:
+If a previous commit was interrupted (e.g., process killed, crash), a stale lockfile may remain. The **pre-commit hook automatically detects and recovers** from this situation — no manual intervention is required. You will see a warning message but the commit will proceed normally:
+
+```
+warning: stale lock detected, auto-recovering...
+  restored: docker-compose.yml
+```
+
+This means you can simply retry your commit and it will succeed.
+
+### Stash Remnants
+
+If a commit is interrupted in a way that leaves stash files but the process is still alive (e.g., commit message editor closed, commit-msg hook failed), the next pre-commit will detect remaining stash files and block the commit:
 
 ```
 warning: stash has remaining files (a previous commit may have been interrupted)
@@ -219,6 +230,7 @@ git-shadow restore docker-compose.yml
 - Restores stashed files to the working tree
 - Removes stale lockfiles
 - Cleans up the stash directory
+- Prints a hint to retry the commit
 
 ## Diagnostics
 

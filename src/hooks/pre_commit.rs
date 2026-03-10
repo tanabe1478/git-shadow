@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use colored::Colorize;
 
+use crate::commands::restore::restore_stash;
 use crate::config::{FileEntry, FileType, ShadowConfig};
 use crate::error::ShadowError;
 use crate::git::GitRepo;
@@ -50,11 +51,30 @@ impl PreCommitTransaction {
 }
 
 pub fn handle(git: &GitRepo) -> Result<()> {
-    // 0. Acquire lock
-    lock::acquire_lock(&git.shadow_dir).map_err(|e| {
-        // Convert StaleLock to anyhow with context
-        anyhow::anyhow!("{}", e)
-    })?;
+    // 0. Acquire lock (with stale lock auto-recovery)
+    match lock::acquire_lock(&git.shadow_dir) {
+        Ok(()) => {}
+        Err(e) if e.is_stale_lock() => {
+            eprintln!(
+                "{}",
+                "warning: stale lock detected, auto-recovering...".yellow()
+            );
+            // Restore any stashed files from the interrupted commit
+            let recovered = restore_stash(git, None)?;
+            if !recovered.is_empty() {
+                for f in &recovered {
+                    eprintln!("  restored: {}", f);
+                }
+            }
+            // Remove the stale lock
+            lock::release_lock(&git.shadow_dir)?;
+            // Re-acquire lock for this commit
+            lock::acquire_lock(&git.shadow_dir).map_err(|e| anyhow::anyhow!("{}", e))?;
+        }
+        Err(e) => {
+            return Err(anyhow::anyhow!("{}", e));
+        }
+    }
 
     let config = ShadowConfig::load(&git.shadow_dir)?;
 
@@ -497,5 +517,42 @@ mod tests {
         // Lock should be released
         let status = lock::check_lock(&git.shadow_dir).unwrap();
         assert!(matches!(status, LockStatus::Free));
+    }
+
+    #[test]
+    fn test_stale_lock_auto_recovery() {
+        let (_dir, git) = make_test_repo();
+        let _config = setup_overlay(&git);
+
+        // Simulate interrupted commit: stash + stale lock
+        fs_util::atomic_write(
+            &git.shadow_dir.join("stash").join("CLAUDE.md"),
+            b"# Team\n# My additions\n",
+        )
+        .unwrap();
+        std::fs::write(git.root.join("CLAUDE.md"), "# Team\n").unwrap();
+        std::fs::write(
+            git.shadow_dir.join("lock"),
+            "pid=999999\ntimestamp=2026-01-01T00:00:00+00:00",
+        )
+        .unwrap();
+
+        // handle() should auto-recover and succeed
+        handle(&git).unwrap();
+
+        // Working tree should have baseline (pre-commit did its job)
+        let wt = std::fs::read_to_string(git.root.join("CLAUDE.md")).unwrap();
+        assert_eq!(wt, "# Team\n");
+
+        // Stash should have shadow content (freshly stashed)
+        let stash =
+            std::fs::read_to_string(git.shadow_dir.join("stash").join("CLAUDE.md")).unwrap();
+        assert_eq!(stash, "# Team\n# My additions\n");
+
+        // Lock should be held by us
+        let status = lock::check_lock(&git.shadow_dir).unwrap();
+        assert!(matches!(status, LockStatus::HeldByUs));
+
+        lock::release_lock(&git.shadow_dir).unwrap();
     }
 }

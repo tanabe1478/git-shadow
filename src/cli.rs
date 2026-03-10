@@ -54,7 +54,7 @@ pub enum Commands {
         file: Option<String>,
     },
 
-    /// Recover from abnormal state
+    /// Recover from interrupted commits (stale locks are auto-recovered by pre-commit)
     Restore {
         /// Target file path (omit for all files)
         file: Option<String>,
