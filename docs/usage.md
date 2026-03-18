@@ -274,12 +274,12 @@ Encoding order: `%` → `%25` first, then `/` → `%2F`.
 
 ```bash
 git-shadow install
-git-shadow add .env.local          # overlay: local-only config
-git-shadow add --phantom notes.md  # phantom: personal notes
+git-shadow add docker-compose.yml     # overlay: tracked file with local overrides
+git-shadow add --phantom .env.local  # phantom: local-only config (untracked)
 
 # Normal development — shadow changes are stripped automatically
-vim .env.local
-git commit -am "feat: add login"   # .env.local changes are NOT committed
+vim docker-compose.yml
+git commit -am "feat: add login"   # local overrides are NOT committed
 ```
 
 ### Adding a worktree

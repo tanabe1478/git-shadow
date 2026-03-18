@@ -47,4 +47,4 @@ Some commands (e.g., `remove`, `restore`, `rebase`) have `_for_test` variants in
 
 ### Test Coverage
 
-185 total tests: 176 unit tests (in `src/`) + 9 E2E tests (in `tests/`). All commands, hooks, and core modules have dedicated test coverage.
+Unit tests live in `src/` (via `#[cfg(test)]`) and E2E tests in `tests/`. All commands, hooks, and core modules have dedicated test coverage including worktree scenarios.

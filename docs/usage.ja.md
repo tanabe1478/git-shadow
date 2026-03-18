@@ -274,12 +274,12 @@ git-shadow doctor
 
 ```bash
 git-shadow install
-git-shadow add .env.local          # overlay: ローカル限定の設定
-git-shadow add --phantom notes.md  # phantom: 個人メモ
+git-shadow add docker-compose.yml     # overlay: Git追跡済みファイルのローカル上書き
+git-shadow add --phantom .env.local  # phantom: ローカル限定の設定（未追跡）
 
 # 通常の開発 — shadow の変更は自動的にコミットから除外される
-vim .env.local
-git commit -am "feat: add login"   # .env.local の変更はコミットされない
+vim docker-compose.yml
+git commit -am "feat: add login"   # ローカルの上書きはコミットされない
 ```
 
 ### worktree の追加

@@ -76,7 +76,7 @@ Nested paths are URL-encoded for flat storage in `baselines/` and `stash/`:
 
 ```bash
 cargo build
-cargo test                      # 185 tests (176 unit + 9 E2E)
+cargo test                      # Run all unit + E2E tests
 cargo clippy -- -D warnings     # Must pass with zero warnings
 cargo fmt --check               # Must pass
 ```
