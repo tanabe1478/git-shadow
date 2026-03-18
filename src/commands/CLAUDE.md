@@ -30,7 +30,7 @@ Every command follows the same structure:
 
 ### install.rs: Hook Chaining
 
-Generated hook scripts call `git-shadow hook <name>` first, then chain to any pre-existing hook (renamed to `<hook>.pre-shadow`). This preserves existing hooks from other tools. Idempotent -- re-running `install` skips already-installed hooks. Hooks are installed to `common_dir/hooks/` so they are shared across worktrees.
+Generated hook scripts call `git-shadow hook <name>` first, then chain to any pre-existing hook (renamed to `<hook>.pre-shadow`). This preserves existing hooks from other tools. Idempotent -- re-running `install` skips already-installed hooks. Hooks are installed to `common_dir/hooks/` so they are shared across worktrees. In a worktree, `inherit_from_main_worktree()` auto-inherits the managed file list from the main repo if no local config exists yet -- overlay baselines are regenerated from the worktree's HEAD, phantom entries are copied as-is.
 
 ### add.rs: Overlay vs Phantom Validation
 

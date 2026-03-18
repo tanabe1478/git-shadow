@@ -27,7 +27,7 @@ This creates:
 
 If hooks already exist, they are renamed to `<hook>.pre-shadow` and chained after git-shadow's processing.
 
-> **Worktrees**: If you use `git worktree`, run `git-shadow install` separately in each worktree. Shadow state is per-worktree, so each one maintains its own config, baselines, and stash. See [git worktree Support](#git-worktree-support) for details.
+> **Worktrees**: If you use `git worktree`, run `git-shadow install` separately in each worktree. If the main repo already has shadow-managed files, `install` automatically inherits the file list (overlay baselines are regenerated from the worktree's HEAD; phantom entries are copied as-is). See [git worktree Support](#git-worktree-support) for details.
 
 ## Managing Files
 
@@ -286,7 +286,8 @@ Only text files are supported. Binary files are rejected by `git-shadow add` bec
 
 git-shadow works with `git worktree` setups. Each worktree is treated as an independent shadow environment:
 
-- **Per-worktree state**: Config, baselines, stash, suspended state, and lockfiles are stored in each worktree's own `.git` directory. You must run `git-shadow install` and `git-shadow add` separately in each worktree.
+- **Per-worktree state**: Config, baselines, stash, suspended state, and lockfiles are stored in each worktree's own `.git` directory.
+- **Auto-inherit on install**: When you run `git-shadow install` in a worktree, if the main repo has shadow-managed files and the worktree has no existing config, the file list is automatically inherited. Overlay baselines are regenerated from the worktree's HEAD, and phantom entries are copied as-is. The output message is `inherited N file(s) from main worktree`.
 - **Shared resources**: Git hooks and `.git/info/exclude` entries are stored in the common Git directory and shared across all worktrees.
 - **Diagnostics**: `git-shadow doctor` detects when you are in a worktree and warns if shadow has not been initialized.
 - **Git version**: Git 2.31+ is recommended for full worktree support (`--path-format=absolute`). Older versions (2.20+) are supported via a fallback, but 2.31+ is preferred.
@@ -297,9 +298,8 @@ cd my-repo
 git-shadow install
 git-shadow add docker-compose.yml
 
-# Create and set up a worktree
+# Create and set up a worktree — install inherits managed files automatically
 git worktree add ../my-repo-feature feature-branch
 cd ../my-repo-feature
-git-shadow install
-git-shadow add docker-compose.yml   # independent from main repo's shadow
+git-shadow install              # inherits docker-compose.yml from main repo
 ```

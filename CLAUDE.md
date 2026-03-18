@@ -23,7 +23,7 @@
 - **Atomic writes** -- All file mutations use tempfile + rename via `fs_util::atomic_write()` to prevent corruption.
 - **PID-based lockfile** -- Uses `libc::kill(pid, 0)` for stale lock detection.
 - **PreCommitTransaction pattern** -- The pre-commit hook tracks state for rollback on failure.
-- **Worktree awareness** -- `GitRepo::discover()` resolves `git_dir` (per-worktree) and `common_dir` (shared). Hooks and `.git/info/exclude` use `common_dir` so they are shared across worktrees. Shadow state (`config.json`, `baselines/`, `stash/`, `lock`) uses `git_dir` so each worktree is independent. Fallback discovery handles Git < 2.31 which lacks `--git-common-dir`.
+- **Worktree awareness** -- `GitRepo::discover()` resolves `git_dir` (per-worktree) and `common_dir` (shared). Hooks and `.git/info/exclude` use `common_dir` so they are shared across worktrees. Shadow state (`config.json`, `baselines/`, `stash/`, `lock`) uses `git_dir` so each worktree is independent. Fallback discovery handles Git < 2.31 which lacks `--git-common-dir`. On `install`, if running in a worktree with no existing config, the managed file list is auto-inherited from the main repo (`inherit_from_main_worktree()`): overlay baselines are regenerated from the worktree's HEAD, phantom entries are copied as-is.
 
 ### Module Structure
 
@@ -76,7 +76,7 @@ Nested paths are URL-encoded for flat storage in `baselines/` and `stash/`:
 
 ```bash
 cargo build
-cargo test                      # 183 tests (175 unit + 8 E2E)
+cargo test                      # 185 tests (176 unit + 9 E2E)
 cargo clippy -- -D warnings     # Must pass with zero warnings
 cargo fmt --check               # Must pass
 ```

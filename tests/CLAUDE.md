@@ -28,11 +28,12 @@ Three scenarios covering the core commit lifecycle:
 
 ## E2E Tests (test_worktree.rs)
 
-Three scenarios covering git worktree support:
+Four scenarios covering git worktree support:
 
 1. **`test_worktree_discover`**: Creates a worktree, verifies `GitRepo::discover()` resolves correct `root`, `git_dir`, and `common_dir` paths
 2. **`test_worktree_install_shares_hooks`**: Installs hooks from a worktree, verifies hooks are written to `common_dir/hooks/` (shared with main worktree)
 3. **`test_worktree_overlay_commit_cycle`**: Full overlay commit cycle in a worktree -- install, add, edit, pre-commit, commit, post-commit -- verifying per-worktree shadow state isolation
+4. **`test_install_inherits_config_from_main_worktree`**: Verifies that `install` in a worktree auto-inherits managed files from the main repo -- overlay baselines are regenerated from worktree HEAD, phantom entries are copied as-is
 
 ## Testing Patterns
 
@@ -46,4 +47,4 @@ Some commands (e.g., `remove`, `restore`, `rebase`) have `_for_test` variants in
 
 ### Test Coverage
 
-183 total tests: 175 unit tests (in `src/`) + 8 E2E tests (in `tests/`). All commands, hooks, and core modules have dedicated test coverage.
+185 total tests: 176 unit tests (in `src/`) + 9 E2E tests (in `tests/`). All commands, hooks, and core modules have dedicated test coverage.

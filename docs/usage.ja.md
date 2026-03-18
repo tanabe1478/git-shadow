@@ -27,7 +27,7 @@ git-shadow install
 
 既存の hook がある場合は `<hook>.pre-shadow` にリネームされ、git-shadow の処理後にチェーン実行されます。
 
-> **worktree**: `git worktree` を使用している場合は、各ワークツリーで `git-shadow install` を個別に実行してください。shadow の状態はワークツリーごとに独立しているため、config, baselines, stash はそれぞれ別に管理されます。詳細は [git worktree 対応](#git-worktree-対応) を参照してください。
+> **worktree**: `git worktree` を使用している場合は、各ワークツリーで `git-shadow install` を個別に実行してください。メインリポジトリに shadow 管理対象ファイルがある場合、`install` 時に自動的にファイルリストが継承されます（overlay のベースラインはワークツリーの HEAD から再生成、phantom エントリはそのままコピー）。詳細は [git worktree 対応](#git-worktree-対応) を参照してください。
 
 ## ファイルの管理
 
@@ -286,7 +286,8 @@ git-shadow は overlay ファイルの部分ステージ (`git add -p`) をサ�
 
 git-shadow は `git worktree` 環境に対応しています。各ワークツリーは独立した shadow 環境として扱われます:
 
-- **ワークツリー固有の状態**: config, baselines, stash, suspended 状態, lockfile は各ワークツリーの `.git` ディレクトリに保存されます。各ワークツリーで `git-shadow install` と `git-shadow add` を個別に実行する必要があります。
+- **ワークツリー固有の状態**: config, baselines, stash, suspended 状態, lockfile は各ワークツリーの `.git` ディレクトリに保存されます。
+- **install 時の自動継承**: ワークツリーで `git-shadow install` を実行すると、メインリポジトリに shadow 管理対象ファイルがあり、ワークツリーにまだ config が存在しない場合、ファイルリストが自動的に継承されます。overlay のベースラインはワークツリーの HEAD から再生成され、phantom エントリはそのままコピーされます。出力メッセージは `inherited N file(s) from main worktree` です。
 - **共有リソース**: Git hooks と `.git/info/exclude` のエントリは共通の Git ディレクトリに保存され、すべてのワークツリーで共有されます。
 - **診断**: `git-shadow doctor` はワークツリー内にいることを検出し、shadow が未初期化の場合は警告を表示します。
 - **Git バージョン**: worktree の完全サポートには Git 2.31+ を推奨します（`--path-format=absolute` 対応）。古いバージョン（2.20+）もフォールバックで動作しますが、2.31+ が推奨です。
@@ -297,9 +298,8 @@ cd my-repo
 git-shadow install
 git-shadow add docker-compose.yml
 
-# ワークツリーを作成してセットアップ
+# ワークツリーを作成してセットアップ — install が管理対象ファイルを自動継承
 git worktree add ../my-repo-feature feature-branch
 cd ../my-repo-feature
-git-shadow install
-git-shadow add docker-compose.yml   # メインリポジトリの shadow とは独立
+git-shadow install              # メインリポジトリから docker-compose.yml を継承
 ```

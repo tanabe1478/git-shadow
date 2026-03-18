@@ -88,7 +88,7 @@ git show HEAD:docker-compose.yml  # clean, team-only content
 
 All data is stored in `.git/shadow/` — inside `.git/`, so it's never committed.
 
-**Worktree support**: In `git worktree` setups, hooks and exclude rules are shared across worktrees, but shadow state (config, baselines, stash) is per-worktree. Each worktree needs its own `git-shadow install` and `git-shadow add`.
+**Worktree support**: In `git worktree` setups, hooks and exclude rules are shared across worktrees, but shadow state (config, baselines, stash) is per-worktree. Each worktree needs its own `git-shadow install`. If the main repo already has shadow-managed files, `install` automatically inherits the file list — overlay baselines are regenerated from the worktree's HEAD, and phantom entries are copied as-is. This means a single `install` command is all you need to set up a worktree.
 
 ## Safety
 
