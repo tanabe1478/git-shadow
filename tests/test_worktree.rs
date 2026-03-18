@@ -154,6 +154,52 @@ fn test_overlay_commit_cycle_in_worktree() {
     );
 }
 
+#[test]
+fn test_install_inherits_config_from_main_worktree() {
+    let repo = common::TestRepo::new();
+    repo.create_file("CLAUDE.md", "# Team\n");
+    repo.create_file("local.md", "local notes");
+    repo.commit("initial commit");
+
+    let main_git = GitRepo::discover(&repo.root).unwrap();
+
+    // Set up shadow in main repo
+    std::fs::create_dir_all(main_git.shadow_dir.join("baselines")).unwrap();
+    std::fs::create_dir_all(main_git.shadow_dir.join("stash")).unwrap();
+    install_hooks_for_test(&main_git);
+
+    // Register an overlay
+    let commit = main_git.head_commit().unwrap();
+    let baseline = main_git.show_file("HEAD", "CLAUDE.md").unwrap();
+    let encoded = path::encode_path("CLAUDE.md");
+    fs_util::atomic_write(
+        &main_git.shadow_dir.join("baselines").join(&encoded),
+        &baseline,
+    )
+    .unwrap();
+    let mut config = ShadowConfig::new();
+    config.add_overlay("CLAUDE.md".to_string(), commit).unwrap();
+    config.save(&main_git.shadow_dir).unwrap();
+
+    // Create worktree and install
+    let wt_path = repo.add_worktree("wt-inherit");
+    let wt_git = GitRepo::discover(&wt_path).unwrap();
+    std::fs::create_dir_all(wt_git.shadow_dir.join("baselines")).unwrap();
+    std::fs::create_dir_all(wt_git.shadow_dir.join("stash")).unwrap();
+    git_shadow::commands::install::inherit_from_main_worktree(&wt_git).unwrap();
+
+    // Config should be inherited
+    let wt_config = ShadowConfig::load(&wt_git.shadow_dir).unwrap();
+    assert_eq!(wt_config.files.len(), 1);
+    assert!(wt_config.get("CLAUDE.md").is_some());
+
+    // Baseline should exist and match HEAD
+    let wt_baseline = wt_git.shadow_dir.join("baselines").join(&encoded);
+    assert!(wt_baseline.exists());
+    let content = std::fs::read_to_string(&wt_baseline).unwrap();
+    assert_eq!(content, "# Team\n");
+}
+
 fn install_hooks_for_test(git: &GitRepo) {
     let hooks_dir = git.hooks_dir();
     std::fs::create_dir_all(&hooks_dir).unwrap();
