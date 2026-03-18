@@ -23,6 +23,7 @@
 - **Atomic writes** -- All file mutations use tempfile + rename via `fs_util::atomic_write()` to prevent corruption.
 - **PID-based lockfile** -- Uses `libc::kill(pid, 0)` for stale lock detection.
 - **PreCommitTransaction pattern** -- The pre-commit hook tracks state for rollback on failure.
+- **Worktree awareness** -- `GitRepo::discover()` resolves `git_dir` (per-worktree) and `common_dir` (shared). Hooks and `.git/info/exclude` use `common_dir` so they are shared across worktrees. Shadow state (`config.json`, `baselines/`, `stash/`, `lock`) uses `git_dir` so each worktree is independent. Fallback discovery handles Git < 2.31 which lacks `--git-common-dir`.
 
 ### Module Structure
 
@@ -36,7 +37,7 @@ src/
   path.rs              # Path normalization + URL encoding (%25 before %2F)
   lock.rs              # Lockfile acquire/release/stale detection
   fs_util.rs           # Atomic write, binary detection, size check
-  git.rs               # GitRepo struct wrapping git commands
+  git.rs               # GitRepo struct (root, git_dir, common_dir, shadow_dir; hooks_dir())
   exclude.rs           # .git/info/exclude section management
   diff_util.rs         # Unified diff formatting (similar crate)
   merge.rs             # 3-way merge via `git merge-file -p --diff3`
@@ -59,6 +60,7 @@ src/
 tests/
   common/mod.rs        # TestRepo helper
   test_commit_cycle.rs # E2E: overlay cycle, phantom cycle, rollback
+  test_worktree.rs     # E2E: worktree discovery, install, commit cycle
 ```
 
 ### Path Encoding
@@ -74,7 +76,7 @@ Nested paths are URL-encoded for flat storage in `baselines/` and `stash/`:
 
 ```bash
 cargo build
-cargo test                      # 176 tests (171 unit + 5 E2E)
+cargo test                      # 183 tests (175 unit + 8 E2E)
 cargo clippy -- -D warnings     # Must pass with zero warnings
 cargo fmt --check               # Must pass
 ```

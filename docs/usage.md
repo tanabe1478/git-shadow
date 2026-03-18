@@ -27,6 +27,8 @@ This creates:
 
 If hooks already exist, they are renamed to `<hook>.pre-shadow` and chained after git-shadow's processing.
 
+> **Worktrees**: If you use `git worktree`, run `git-shadow install` separately in each worktree. Shadow state is per-worktree, so each one maintains its own config, baselines, and stash. See [git worktree Support](#git-worktree-support) for details.
+
 ## Managing Files
 
 ### Overlay: Local Changes on Tracked Files
@@ -249,6 +251,15 @@ All data lives inside `.git/shadow/`, which is automatically excluded from commi
     └── ...
 ```
 
+In a `git worktree` setup, storage is split between two directories:
+
+| Location | Scope | Contents |
+|----------|-------|----------|
+| `git_dir` (per-worktree `.git`) | Per-worktree | `shadow/` (config, baselines, stash, suspended, lock) |
+| `common_dir` (shared `.git`) | Shared | `hooks/`, `info/exclude` |
+
+This means each worktree has independent shadow state, while hooks and exclude rules are shared across all worktrees.
+
 ### Path Encoding
 
 Nested paths are URL-encoded for flat storage:
@@ -270,3 +281,25 @@ git-shadow does not support partial staging (`git add -p`) of overlay files. If 
 ### Binary Files
 
 Only text files are supported. Binary files are rejected by `git-shadow add` because the rebase command relies on text-based 3-way merging.
+
+### git worktree Support
+
+git-shadow works with `git worktree` setups. Each worktree is treated as an independent shadow environment:
+
+- **Per-worktree state**: Config, baselines, stash, suspended state, and lockfiles are stored in each worktree's own `.git` directory. You must run `git-shadow install` and `git-shadow add` separately in each worktree.
+- **Shared resources**: Git hooks and `.git/info/exclude` entries are stored in the common Git directory and shared across all worktrees.
+- **Diagnostics**: `git-shadow doctor` detects when you are in a worktree and warns if shadow has not been initialized.
+- **Git version**: Git 2.31+ is recommended for full worktree support (`--path-format=absolute`). Older versions (2.20+) are supported via a fallback, but 2.31+ is preferred.
+
+```bash
+# Main repository
+cd my-repo
+git-shadow install
+git-shadow add docker-compose.yml
+
+# Create and set up a worktree
+git worktree add ../my-repo-feature feature-branch
+cd ../my-repo-feature
+git-shadow install
+git-shadow add docker-compose.yml   # independent from main repo's shadow
+```
