@@ -8,12 +8,54 @@ use crate::error::ShadowError;
 pub struct GitRepo {
     pub root: PathBuf,
     pub git_dir: PathBuf,
+    pub common_dir: PathBuf,
     pub shadow_dir: PathBuf,
 }
 
 impl GitRepo {
     /// Discover git repo from current or given directory
     pub fn discover(start: &Path) -> anyhow::Result<Self> {
+        // Try --path-format=absolute first (Git 2.31+), fall back to manual resolution
+        let output = Command::new("git")
+            .args([
+                "rev-parse",
+                "--path-format=absolute",
+                "--show-toplevel",
+                "--git-dir",
+                "--git-common-dir",
+            ])
+            .current_dir(start)
+            .output()
+            .context("failed to run git command")?;
+
+        if !output.status.success() {
+            // Fallback: try without --path-format=absolute for older Git
+            return Self::discover_fallback(start);
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let lines: Vec<&str> = stdout.trim().lines().collect();
+
+        if lines.len() < 3 {
+            // --path-format=absolute may not be supported; fall back
+            return Self::discover_fallback(start);
+        }
+
+        let root = PathBuf::from(lines[0]);
+        let git_dir = PathBuf::from(lines[1]);
+        let common_dir = PathBuf::from(lines[2]);
+        let shadow_dir = git_dir.join("shadow");
+
+        Ok(Self {
+            root,
+            git_dir,
+            common_dir,
+            shadow_dir,
+        })
+    }
+
+    /// Fallback discovery for Git < 2.31 (no --path-format=absolute)
+    fn discover_fallback(start: &Path) -> anyhow::Result<Self> {
         let output = Command::new("git")
             .args(["rev-parse", "--show-toplevel"])
             .current_dir(start)
@@ -25,14 +67,61 @@ impl GitRepo {
         }
 
         let root = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
-        let git_dir = root.join(".git");
+
+        // Resolve git_dir
+        let git_dir_output = Command::new("git")
+            .args(["rev-parse", "--git-dir"])
+            .current_dir(start)
+            .output()
+            .context("failed to run git rev-parse --git-dir")?;
+
+        if !git_dir_output.status.success() {
+            bail!("git rev-parse --git-dir failed");
+        }
+
+        let git_dir_raw = String::from_utf8_lossy(&git_dir_output.stdout)
+            .trim()
+            .to_string();
+        let git_dir = Self::resolve_path(start, &git_dir_raw)?;
+
+        // Resolve common_dir (Git 2.5+), fall back to git_dir
+        let common_dir = Command::new("git")
+            .args(["rev-parse", "--git-common-dir"])
+            .current_dir(start)
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| {
+                let raw = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                Self::resolve_path(start, &raw).unwrap_or_else(|_| git_dir.clone())
+            })
+            .unwrap_or_else(|| git_dir.clone());
+
         let shadow_dir = git_dir.join("shadow");
 
         Ok(Self {
             root,
             git_dir,
+            common_dir,
             shadow_dir,
         })
+    }
+
+    /// Resolve a possibly-relative path against a base directory
+    fn resolve_path(base: &Path, raw: &str) -> anyhow::Result<PathBuf> {
+        let path = PathBuf::from(raw);
+        if path.is_absolute() {
+            Ok(path)
+        } else {
+            base.join(&path)
+                .canonicalize()
+                .with_context(|| format!("failed to canonicalize {}", raw))
+        }
+    }
+
+    /// Get the hooks directory (lives under common_dir, shared across worktrees)
+    pub fn hooks_dir(&self) -> PathBuf {
+        self.common_dir.join("hooks")
     }
 
     /// Get current HEAD commit hash (full)
@@ -137,7 +226,7 @@ impl GitRepo {
 
     /// Check if hooks are installed
     pub fn hooks_installed(&self) -> bool {
-        let hooks_dir = self.git_dir.join("hooks");
+        let hooks_dir = self.hooks_dir();
         ["pre-commit", "post-commit", "post-merge"]
             .iter()
             .all(|name| {
@@ -310,5 +399,104 @@ mod tests {
     fn test_hooks_installed_false() {
         let (_dir, repo) = make_test_repo();
         assert!(!repo.hooks_installed());
+    }
+
+    #[test]
+    fn test_discover_normal_repo_common_dir_equals_git_dir() {
+        let (_dir, repo) = make_test_repo();
+        assert_eq!(repo.common_dir, repo.git_dir);
+    }
+
+    #[test]
+    fn test_discover_in_worktree() {
+        let (dir, _repo) = make_test_repo();
+        let root = dir.path().to_path_buf();
+
+        // Create a worktree
+        let wt_path = dir.path().join("worktree");
+        run_cmd(
+            &root,
+            "git",
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "wt-branch",
+                wt_path.to_str().unwrap(),
+            ],
+        );
+
+        let wt_repo = GitRepo::discover(&wt_path).unwrap();
+
+        // root should be the worktree path
+        assert_eq!(
+            wt_repo.root.canonicalize().unwrap(),
+            wt_path.canonicalize().unwrap()
+        );
+
+        // git_dir should be under .git/worktrees/
+        assert!(
+            wt_repo.git_dir.to_str().unwrap().contains("worktrees"),
+            "git_dir should be under worktrees/: {:?}",
+            wt_repo.git_dir
+        );
+
+        // shadow_dir should be under git_dir (per-worktree)
+        assert!(wt_repo.shadow_dir.starts_with(&wt_repo.git_dir));
+    }
+
+    #[test]
+    fn test_discover_common_dir_in_worktree() {
+        let (dir, main_repo) = make_test_repo();
+        let root = dir.path().to_path_buf();
+
+        let wt_path = dir.path().join("worktree2");
+        run_cmd(
+            &root,
+            "git",
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "wt-branch2",
+                wt_path.to_str().unwrap(),
+            ],
+        );
+
+        let wt_repo = GitRepo::discover(&wt_path).unwrap();
+
+        // common_dir should point to main repo's .git
+        assert_eq!(
+            wt_repo.common_dir.canonicalize().unwrap(),
+            main_repo.git_dir.canonicalize().unwrap()
+        );
+
+        // git_dir should differ from common_dir in worktree
+        assert_ne!(wt_repo.git_dir, wt_repo.common_dir);
+    }
+
+    #[test]
+    fn test_hooks_dir_uses_common_dir() {
+        let (dir, _repo) = make_test_repo();
+        let root = dir.path().to_path_buf();
+
+        let wt_path = dir.path().join("worktree3");
+        run_cmd(
+            &root,
+            "git",
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "wt-branch3",
+                wt_path.to_str().unwrap(),
+            ],
+        );
+
+        let wt_repo = GitRepo::discover(&wt_path).unwrap();
+
+        // hooks_dir should be under common_dir, not git_dir
+        assert!(wt_repo.hooks_dir().starts_with(&wt_repo.common_dir));
+        assert!(!wt_repo.hooks_dir().starts_with(&wt_repo.git_dir));
     }
 }

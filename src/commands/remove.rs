@@ -103,7 +103,7 @@ fn remove_phantom(
         } else {
             file_path.to_string()
         };
-        let manager = ExcludeManager::new(&git.git_dir);
+        let manager = ExcludeManager::new(&git.common_dir);
         manager.remove_entry(&exclude_path)?;
     }
 
@@ -196,7 +196,7 @@ mod tests {
             .unwrap();
 
         // Add to exclude
-        let manager = ExcludeManager::new(&git.git_dir);
+        let manager = ExcludeManager::new(&git.common_dir);
         manager.add_entry("local.md").unwrap();
 
         config.save(&git.shadow_dir).unwrap();
@@ -342,7 +342,7 @@ mod tests {
             } else {
                 file_path.to_string()
             };
-            let manager = ExcludeManager::new(&git.git_dir);
+            let manager = ExcludeManager::new(&git.common_dir);
             manager.remove_entry(&exclude_path).unwrap();
         }
     }
@@ -357,7 +357,7 @@ mod tests {
         std::fs::write(git.root.join(".claude/settings.json"), "{}").unwrap();
 
         // Add exclude entry with trailing slash (as add_phantom would)
-        let manager = ExcludeManager::new(&git.git_dir);
+        let manager = ExcludeManager::new(&git.common_dir);
         manager.add_entry(".claude/").unwrap();
 
         config
@@ -386,7 +386,7 @@ mod tests {
         let (_dir, git) = make_test_repo();
 
         // Add file exclude entry (no trailing slash)
-        let manager = ExcludeManager::new(&git.git_dir);
+        let manager = ExcludeManager::new(&git.common_dir);
         manager.add_entry("local.md").unwrap();
 
         // Remove phantom file

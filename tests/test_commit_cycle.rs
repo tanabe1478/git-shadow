@@ -402,7 +402,7 @@ fn test_mixed_overlay_and_phantom_directory() {
 }
 
 fn install_hooks_for_test(git: &GitRepo) {
-    let hooks_dir = git.git_dir.join("hooks");
+    let hooks_dir = git.hooks_dir();
     std::fs::create_dir_all(&hooks_dir).unwrap();
 
     for name in &["pre-commit", "post-commit", "post-merge"] {

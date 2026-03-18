@@ -10,6 +10,8 @@ fn generate_hook_script(hook_name: &str) -> String {
     format!(
         r#"#!/bin/sh
 # git-shadow managed hook
+HOOKS_DIR="$(cd "$(git rev-parse --git-common-dir)" && pwd)/hooks"
+
 git-shadow hook {hook_name}
 SHADOW_EXIT=$?
 if [ $SHADOW_EXIT -ne 0 ]; then
@@ -17,8 +19,8 @@ if [ $SHADOW_EXIT -ne 0 ]; then
 fi
 
 # Chain to existing hook
-if [ -x .git/hooks/{hook_name}.pre-shadow ]; then
-  .git/hooks/{hook_name}.pre-shadow "$@"
+if [ -x "$HOOKS_DIR/{hook_name}.pre-shadow" ]; then
+  "$HOOKS_DIR/{hook_name}.pre-shadow" "$@"
 fi
 "#,
         hook_name = hook_name
@@ -35,7 +37,7 @@ pub fn run() -> Result<()> {
     std::fs::create_dir_all(shadow_dir.join("stash"))
         .context("failed to create .git/shadow/stash/")?;
 
-    let hooks_dir = git.git_dir.join("hooks");
+    let hooks_dir = git.hooks_dir();
     std::fs::create_dir_all(&hooks_dir).context("failed to create hooks directory")?;
 
     for hook_name in HOOK_NAMES {
@@ -100,7 +102,7 @@ mod tests {
         std::fs::create_dir_all(shadow_dir.join("baselines")).unwrap();
         std::fs::create_dir_all(shadow_dir.join("stash")).unwrap();
 
-        let hooks_dir = git.git_dir.join("hooks");
+        let hooks_dir = git.hooks_dir();
         std::fs::create_dir_all(&hooks_dir).unwrap();
 
         for hook_name in HOOK_NAMES {
@@ -127,7 +129,7 @@ mod tests {
         install_hooks(&git);
 
         for name in HOOK_NAMES {
-            let hook = git.git_dir.join("hooks").join(name);
+            let hook = git.hooks_dir().join(name);
             assert!(hook.exists(), "{} should exist", name);
         }
     }
@@ -138,7 +140,7 @@ mod tests {
         install_hooks(&git);
 
         for name in HOOK_NAMES {
-            let hook = git.git_dir.join("hooks").join(name);
+            let hook = git.hooks_dir().join(name);
             let content = std::fs::read_to_string(&hook).unwrap();
             assert!(
                 content.contains(&format!("git-shadow hook {}", name)),
@@ -154,7 +156,7 @@ mod tests {
         install_hooks(&git);
 
         for name in HOOK_NAMES {
-            let hook = git.git_dir.join("hooks").join(name);
+            let hook = git.hooks_dir().join(name);
             let perms = std::fs::metadata(&hook).unwrap().permissions();
             assert!(perms.mode() & 0o111 != 0, "{} should be executable", name);
         }
@@ -163,7 +165,7 @@ mod tests {
     #[test]
     fn test_preserves_existing_hooks() {
         let (_dir, git) = make_test_repo();
-        let hooks_dir = git.git_dir.join("hooks");
+        let hooks_dir = git.hooks_dir();
         std::fs::create_dir_all(&hooks_dir).unwrap();
 
         // Create an existing pre-commit hook
@@ -200,7 +202,7 @@ mod tests {
         install_hooks(&git); // Second install should not error
 
         for name in HOOK_NAMES {
-            let hook = git.git_dir.join("hooks").join(name);
+            let hook = git.hooks_dir().join(name);
             let content = std::fs::read_to_string(&hook).unwrap();
             // Should not be double-wrapped
             let count = content.matches("git-shadow hook").count();

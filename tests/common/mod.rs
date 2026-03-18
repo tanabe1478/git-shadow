@@ -55,6 +55,16 @@ impl TestRepo {
         std::fs::create_dir_all(shadow_dir.join("baselines")).unwrap();
         std::fs::create_dir_all(shadow_dir.join("stash")).unwrap();
     }
+
+    /// Create a git worktree under the same TempDir. Returns the worktree root path.
+    pub fn add_worktree(&self, name: &str) -> PathBuf {
+        let wt_path = self.dir.path().join(name);
+        run_git(
+            &self.root,
+            &["worktree", "add", "-b", name, wt_path.to_str().unwrap()],
+        );
+        wt_path
+    }
 }
 
 fn run_git(cwd: &Path, args: &[&str]) -> String {
