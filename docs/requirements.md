@@ -490,8 +490,8 @@ git worktree 環境でも正常に動作する。
 
 ### 設計方針
 
-- **hooks は共有**: `git-shadow install` で作成される hook スクリプトは `common_dir/hooks/` に配置され、すべてのワーキングツリーで共有される。一度 install すれば追加のワーキングツリーでも hook が有効になる。
-- **shadow 状態は独立**: `config.json`、`baselines/`、`stash/`、`lock` は各ワーキングツリーの `git_dir` 配下に保存される。ワーキングツリーごとに異なるファイルを shadow 管理できる。
+- **hooks は共有**: `git-shadow install` で作成される hook スクリプトは `common_dir/hooks/` に配置され、すべてのワーキングツリーで共有される。ただし、hooks の共有はフック発火のみに関わる。各ワーキングツリーでは `git-shadow install` を実行して `shadow/` ディレクトリ（`baselines/`、`stash/` 等）を初期化する必要がある。
+- **shadow 状態は独立**: `config.json`、`baselines/`、`stash/`、`lock` は各ワーキングツリーの `git_dir` 配下に保存される。ワーキングツリーごとに異なるファイルを shadow 管理できる。ファイルの登録（`git-shadow add`）もワーキングツリーごとに行う。
 - **doctor による検出**: `git-shadow doctor` はワーキングツリー環境を検出し、`shadow/` ディレクトリが未初期化の場合は警告を表示して `git-shadow install` の実行を案内する。
 
 ### Git バージョン要件
