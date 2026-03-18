@@ -268,6 +268,82 @@ Nested paths are URL-encoded for flat storage:
 
 Encoding order: `%` → `%25` first, then `/` → `%2F`.
 
+## Workflows
+
+### Basic: single repo setup
+
+```bash
+git-shadow install
+git-shadow add .env.local          # overlay: local-only config
+git-shadow add --phantom notes.md  # phantom: personal notes
+
+# Normal development — shadow changes are stripped automatically
+vim .env.local
+git commit -am "feat: add login"   # .env.local changes are NOT committed
+```
+
+### Adding a worktree
+
+When you create a worktree, run `git-shadow install` once. It inherits the managed file list from the main repo automatically.
+
+```bash
+git worktree add ../feature-branch feature/auth
+cd ../feature-branch
+git-shadow install
+# → "inherited 2 file(s) from main worktree"
+# → overlay baselines regenerated from HEAD
+# → phantom entries copied
+
+# Ready to work immediately
+vim .env.local
+git commit -am "feat: auth"        # shadow changes still stripped
+```
+
+### Per-worktree customization
+
+After inheriting, each worktree can independently add or remove managed files.
+
+```bash
+cd ../feature-branch
+git-shadow add --phantom TODO.md   # only in this worktree
+git-shadow remove notes.md         # only in this worktree
+```
+
+### PR review with a temporary worktree
+
+```bash
+git worktree add ../review-pr-42 pr/42
+cd ../review-pr-42
+git-shadow install                 # inherits config, ready to build/test
+
+# After review, remove the worktree (shadow state is cleaned up automatically)
+cd ../main-repo
+git worktree remove ../review-pr-42
+```
+
+### Branch switching without worktrees
+
+If you prefer switching branches in a single working tree, use suspend/resume:
+
+```bash
+git-shadow suspend                 # stash shadow changes
+git checkout other-branch
+git-shadow resume                  # restore with 3-way merge if needed
+```
+
+With worktrees, suspend/resume is unnecessary — each worktree has independent state.
+
+### Quick reference
+
+| Task | Command |
+|------|---------|
+| Initial setup | `git-shadow install` → `git-shadow add <file>` |
+| Add a worktree | `git worktree add ...` → `cd` → `git-shadow install` |
+| Worktree-specific file | `git-shadow add --phantom <file>` |
+| Remove a worktree | `git worktree remove <path>` (shadow state cleaned up) |
+| Check status | `git-shadow status` / `git-shadow doctor` |
+| Branch switch (no worktree) | `git-shadow suspend` → checkout → `git-shadow resume` |
+
 ## Important Notes
 
 ### `git commit --no-verify`

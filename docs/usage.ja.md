@@ -268,6 +268,82 @@ git-shadow doctor
 
 エンコード順序: `%` → `%25` を先に、次に `/` → `%2F`。
 
+## ワークフロー
+
+### 基本: 単一リポジトリでのセットアップ
+
+```bash
+git-shadow install
+git-shadow add .env.local          # overlay: ローカル限定の設定
+git-shadow add --phantom notes.md  # phantom: 個人メモ
+
+# 通常の開発 — shadow の変更は自動的にコミットから除外される
+vim .env.local
+git commit -am "feat: add login"   # .env.local の変更はコミットされない
+```
+
+### worktree の追加
+
+worktree を作成したら `git-shadow install` を1回実行するだけで、メインリポの管理ファイルリストが自動的に継承されます。
+
+```bash
+git worktree add ../feature-branch feature/auth
+cd ../feature-branch
+git-shadow install
+# → "inherited 2 file(s) from main worktree"
+# → overlay のベースラインは HEAD から再生成
+# → phantom エントリはそのままコピー
+
+# すぐに作業開始できる
+vim .env.local
+git commit -am "feat: auth"        # shadow の変更は除外される
+```
+
+### worktree ごとのカスタマイズ
+
+継承後、各 worktree で独立してファイルの追加・削除ができます。
+
+```bash
+cd ../feature-branch
+git-shadow add --phantom TODO.md   # この worktree だけ
+git-shadow remove notes.md         # この worktree だけ
+```
+
+### PR レビュー用の一時 worktree
+
+```bash
+git worktree add ../review-pr-42 pr/42
+cd ../review-pr-42
+git-shadow install                 # 設定を継承、すぐにビルド・テスト可能
+
+# レビュー完了後、worktree を削除（shadow 状態も自動クリーンアップ）
+cd ../main-repo
+git worktree remove ../review-pr-42
+```
+
+### worktree を使わないブランチ切替
+
+単一の作業ツリーでブランチを切り替える場合は、suspend/resume を使います。
+
+```bash
+git-shadow suspend                 # shadow の変更を退避
+git checkout other-branch
+git-shadow resume                  # 3-way merge で復元
+```
+
+worktree を使う場合、suspend/resume は不要です（各 worktree が独立した状態を持つため）。
+
+### 操作の早見表
+
+| やりたいこと | コマンド |
+|---|---|
+| 初回セットアップ | `git-shadow install` → `git-shadow add <file>` |
+| worktree を追加して使う | `git worktree add ...` → `cd` → `git-shadow install` |
+| worktree 固有のファイルを追加 | `git-shadow add --phantom <file>` |
+| worktree を削除 | `git worktree remove <path>`（shadow 状態も消える） |
+| 状態を確認 | `git-shadow status` / `git-shadow doctor` |
+| ブランチ切替（worktree なし） | `git-shadow suspend` → checkout → `git-shadow resume` |
+
 ## 注意事項
 
 ### `git commit --no-verify`
