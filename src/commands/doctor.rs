@@ -34,6 +34,9 @@ pub fn run() -> Result<()> {
     // 6. Check suspended state
     check_suspended(&config, &git, &mut warnings);
 
+    // 7. Check worktree environment
+    check_worktree(&git, &mut warnings);
+
     // Print results
     if issues.is_empty() && warnings.is_empty() {
         println!("{}", "all checks passed".green());
@@ -57,7 +60,7 @@ pub fn run() -> Result<()> {
 
 fn check_hooks(git: &GitRepo, issues: &mut Vec<String>, warnings: &mut Vec<String>) {
     for hook_name in HOOK_NAMES {
-        let hook_path = git.git_dir.join("hooks").join(hook_name);
+        let hook_path = git.hooks_dir().join(hook_name);
 
         if !hook_path.exists() {
             issues.push(format!("{} hook does not exist", hook_name));
@@ -157,6 +160,28 @@ fn check_suspended(config: &ShadowConfig, git: &GitRepo, warnings: &mut Vec<Stri
     }
 }
 
+fn check_worktree(git: &GitRepo, warnings: &mut Vec<String>) {
+    if git.git_dir != git.common_dir {
+        // We are in a worktree
+        if !git.shadow_dir.exists() {
+            warnings.push(
+                "worktree detected but git-shadow is not initialized here. \
+                 Run `git-shadow install` to set up this worktree"
+                    .to_string(),
+            );
+        } else {
+            let config_path = git.shadow_dir.join("config.json");
+            if !config_path.exists() {
+                warnings.push(
+                    "worktree detected but no shadow config found. \
+                     Run `git-shadow add <file>` to register files in this worktree"
+                        .to_string(),
+                );
+            }
+        }
+    }
+}
+
 fn check_lock(git: &GitRepo, warnings: &mut Vec<String>) {
     if let Ok(status) = lock::check_lock(&git.shadow_dir) {
         match status {
@@ -238,7 +263,7 @@ mod tests {
         let (_dir, git) = make_test_repo();
 
         // Install hooks
-        let hooks_dir = git.git_dir.join("hooks");
+        let hooks_dir = git.hooks_dir();
         std::fs::create_dir_all(&hooks_dir).unwrap();
         for name in super::HOOK_NAMES {
             let content = format!("#!/bin/sh\ngit-shadow hook {}\n", name);
@@ -409,7 +434,7 @@ mod tests {
         config.save(&git.shadow_dir).unwrap();
 
         // Install hooks
-        let hooks_dir = git.git_dir.join("hooks");
+        let hooks_dir = git.hooks_dir();
         std::fs::create_dir_all(&hooks_dir).unwrap();
         for name in super::HOOK_NAMES {
             let content = format!("#!/bin/sh\ngit-shadow hook {}\n", name);

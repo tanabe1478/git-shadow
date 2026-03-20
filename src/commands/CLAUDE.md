@@ -30,7 +30,7 @@ Every command follows the same structure:
 
 ### install.rs: Hook Chaining
 
-Generated hook scripts call `git-shadow hook <name>` first, then chain to any pre-existing hook (renamed to `<hook>.pre-shadow`). This preserves existing hooks from other tools. Idempotent -- re-running `install` skips already-installed hooks.
+Generated hook scripts call `git-shadow hook <name>` first, then chain to any pre-existing hook (renamed to `<hook>.pre-shadow`). This preserves existing hooks from other tools. Idempotent -- re-running `install` skips already-installed hooks. Hooks are installed to `common_dir/hooks/` so they are shared across worktrees. In a worktree, `inherit_from_main_worktree()` auto-inherits the managed file list from the main repo if no local config exists yet -- overlay baselines are regenerated from the worktree's HEAD, phantom entries are copied as-is.
 
 ### add.rs: Overlay vs Phantom Validation
 
@@ -60,8 +60,8 @@ Restores suspended shadow changes. If baseline is unchanged, restores directly. 
 
 ### hook.rs: Hidden Command
 
-The `hook` subcommand is `#[command(hide = true)]` in clap -- it doesn't appear in `--help`. It's only called by the hook scripts installed by `install`.
+The `hook` subcommand is `#[command(hide = true)]` in clap -- it doesn't appear in `--help`. It's only called by the hook scripts installed by `install`. It discovers the repo from `cwd`, so it works correctly in worktrees.
 
 ### doctor.rs: Diagnostic Categories
 
-Checks are split into **issues** (red, things that are broken) and **warnings** (yellow, things that need attention). Checks include: hook existence/permissions/content, competing hook managers (Husky, pre-commit, lefthook), config integrity, stash remnants, stale locks, suspended state.
+Checks are split into **issues** (red, things that are broken) and **warnings** (yellow, things that need attention). Checks include: hook existence/permissions/content, competing hook managers (Husky, pre-commit, lefthook), config integrity, stash remnants, stale locks, suspended state, and worktree initialization (`check_worktree()` warns if running in a worktree where `git-shadow install` has not been run yet).

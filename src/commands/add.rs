@@ -103,7 +103,7 @@ fn add_phantom(
         } else {
             normalized.to_string()
         };
-        let manager = ExcludeManager::new(&git.git_dir);
+        let manager = ExcludeManager::new(&git.common_dir);
         manager
             .add_entry(&exclude_path)
             .context("failed to add to .git/info/exclude")?;
@@ -250,12 +250,12 @@ mod tests {
         std::fs::create_dir_all(git.root.join("src")).unwrap();
         std::fs::write(git.root.join("src/CLAUDE.md"), "# Local\n").unwrap();
         // Ensure info dir exists
-        std::fs::create_dir_all(git.git_dir.join("info")).unwrap();
+        std::fs::create_dir_all(git.common_dir.join("info")).unwrap();
 
         let mut config = ShadowConfig::new();
         add_phantom(&git, &mut config, "src/CLAUDE.md", false).unwrap();
 
-        let manager = ExcludeManager::new(&git.git_dir);
+        let manager = ExcludeManager::new(&git.common_dir);
         let entries = manager.list_entries().unwrap();
         assert!(entries.contains(&"src/CLAUDE.md".to_string()));
     }
@@ -293,12 +293,12 @@ mod tests {
         let (_dir, git) = make_test_repo();
         std::fs::create_dir_all(git.root.join(".claude")).unwrap();
         std::fs::write(git.root.join(".claude/notes.md"), "notes").unwrap();
-        std::fs::create_dir_all(git.git_dir.join("info")).unwrap();
+        std::fs::create_dir_all(git.common_dir.join("info")).unwrap();
 
         let mut config = ShadowConfig::new();
         add_phantom(&git, &mut config, ".claude", false).unwrap();
 
-        let manager = ExcludeManager::new(&git.git_dir);
+        let manager = ExcludeManager::new(&git.common_dir);
         let entries = manager.list_entries().unwrap();
         assert!(
             entries.contains(&".claude/".to_string()),

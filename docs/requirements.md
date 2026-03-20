@@ -287,6 +287,18 @@ git-shadow restore CLAUDE.md
     └── <url_encoded_path>
 ```
 
+#### git worktree 環境でのデータ配置
+
+git worktree を使用する場合、Git ディレクトリは `git_dir`（ワーキングツリーごと）と `common_dir`（共有）に分かれる。git-shadow は以下のように使い分ける:
+
+| 用途 | 参照先 | 理由 |
+|------|--------|------|
+| shadow 状態（`config.json`, `baselines/`, `stash/`, `lock`） | `git_dir` 配下 | ワーキングツリーごとに独立した状態を持つ |
+| hooks（`pre-commit`, `post-commit`, `post-merge`） | `common_dir/hooks/` | すべてのワーキングツリーで共有する |
+| `.git/info/exclude`（phantom の除外設定） | `common_dir/info/exclude` | すべてのワーキングツリーで共有する |
+
+`GitRepo::discover()` は `git rev-parse --path-format=absolute --show-toplevel --git-dir --git-common-dir` で3つのパスを取得する。`--git-common-dir` は Git 2.5.0（2015年）で導入、`--path-format=absolute` は Git 2.31.0（2021年）で導入された。Git 2.31 未満では `--path-format=absolute` がサポートされないため、フォールバック処理で相対パスを手動解決する。`--git-common-dir` も使えない場合は `git_dir` を `common_dir` として扱う（通常リポジトリと同等の動作）。
+
 ### config.json
 
 ```json
@@ -471,6 +483,23 @@ pre-commit の処理中にエラーが発生した場合、既に退避・上書
 `--no-verify` を指定すると pre-commit hook がスキップされるため、shadow 変更の剥がし処理が実行されず、shadow 変更がそのままコミットに含まれる。post-commit はスキップされない場合があるが、pre-commit での剥がし処理が行われていないため、post-commit での復元処理は実行しない（stash が存在しないため）。
 
 これは Git の仕様上回避不可能であり、ユーザーの自己責任とする。また、pre-commit が実行されなかった場合は stash も lock も作成されないため、ツール側で「shadow 変更がコミットされた」ことを事後に検知することも困難である。ドキュメントに注意事項として記載する。
+
+## git worktree 対応
+
+git worktree 環境でも正常に動作する。
+
+### 設計方針
+
+- **hooks は共有**: `git-shadow install` で作成される hook スクリプトは `common_dir/hooks/` に配置され、すべてのワーキングツリーで共有される。ただし、hooks の共有はフック発火のみに関わる。各ワーキングツリーでは `git-shadow install` を実行して `shadow/` ディレクトリ（`baselines/`、`stash/` 等）を初期化する必要がある。
+- **install 時の自動継承**: ワーキングツリーで `git-shadow install` を実行した際、メインリポジトリに `config.json` と shadow 管理対象ファイルが存在し、かつワーキングツリーに `config.json` がまだ存在しない場合、ファイルリストを自動的に継承する。overlay のベースラインはワーキングツリーの HEAD から再生成し、phantom エントリはそのままコピーする。この条件を満たす場合、`git-shadow add` を個別に実行する必要はない。
+- **shadow 状態は独立**: `config.json`、`baselines/`、`stash/`、`lock` は各ワーキングツリーの `git_dir` 配下に保存される。ワーキングツリーごとに異なるファイルを shadow 管理できる。継承後にファイルの追加・削除（`git-shadow add` / `git-shadow remove`）もワーキングツリーごとに独立して行える。
+- **doctor による検出**: `git-shadow doctor` はワーキングツリー環境を検出し、`shadow/` ディレクトリが未初期化の場合は警告を表示して `git-shadow install` の実行を案内する。
+
+### Git バージョン要件
+
+- Git 2.31 以降（推奨）: `git rev-parse --path-format=absolute` で絶対パスを直接取得する。
+- Git 2.5 〜 2.30: `--git-common-dir` は使用可能だが `--path-format=absolute` がないため、相対パスを手動解決するフォールバック処理を使用する。
+- Git 2.5 未満: `--git-common-dir` もサポートされないため、`git_dir` を `common_dir` として扱う。通常リポジトリでは問題なく動作するが、worktree 環境では hooks が共有されない。
 
 ## スコープ外（将来検討）
 

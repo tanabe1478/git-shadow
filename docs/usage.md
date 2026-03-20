@@ -27,6 +27,8 @@ This creates:
 
 If hooks already exist, they are renamed to `<hook>.pre-shadow` and chained after git-shadow's processing.
 
+> **Worktrees**: If you use `git worktree`, run `git-shadow install` separately in each worktree. If the main repo already has shadow-managed files, `install` automatically inherits the file list (overlay baselines are regenerated from the worktree's HEAD; phantom entries are copied as-is). See [git worktree Support](#git-worktree-support) for details.
+
 ## Managing Files
 
 ### Overlay: Local Changes on Tracked Files
@@ -249,6 +251,15 @@ All data lives inside `.git/shadow/`, which is automatically excluded from commi
     └── ...
 ```
 
+In a `git worktree` setup, storage is split between two directories:
+
+| Location | Scope | Contents |
+|----------|-------|----------|
+| `git_dir` (per-worktree `.git`) | Per-worktree | `shadow/` (config, baselines, stash, suspended, lock) |
+| `common_dir` (shared `.git`) | Shared | `hooks/`, `info/exclude` |
+
+This means each worktree has independent shadow state, while hooks and exclude rules are shared across all worktrees.
+
 ### Path Encoding
 
 Nested paths are URL-encoded for flat storage:
@@ -256,6 +267,82 @@ Nested paths are URL-encoded for flat storage:
 - `docs/100%done.md` → `docs%2F100%25done.md`
 
 Encoding order: `%` → `%25` first, then `/` → `%2F`.
+
+## Workflows
+
+### Basic: single repo setup
+
+```bash
+git-shadow install
+git-shadow add docker-compose.yml     # overlay: tracked file with local overrides
+git-shadow add --phantom .env.local  # phantom: local-only config (untracked)
+
+# Normal development — shadow changes are stripped automatically
+vim docker-compose.yml
+git commit -am "feat: add login"   # local overrides are NOT committed
+```
+
+### Adding a worktree
+
+When you create a worktree, run `git-shadow install` once. It inherits the managed file list from the main repo automatically.
+
+```bash
+git worktree add ../feature-branch feature/auth
+cd ../feature-branch
+git-shadow install
+# → "inherited 2 file(s) from main worktree"
+# → overlay baselines regenerated from HEAD
+# → phantom entries copied
+
+# Ready to work immediately
+vim .env.local
+git commit -am "feat: auth"        # shadow changes still stripped
+```
+
+### Per-worktree customization
+
+After inheriting, each worktree can independently add or remove managed files.
+
+```bash
+cd ../feature-branch
+git-shadow add --phantom TODO.md   # only in this worktree
+git-shadow remove notes.md         # only in this worktree
+```
+
+### PR review with a temporary worktree
+
+```bash
+git worktree add ../review-pr-42 pr/42
+cd ../review-pr-42
+git-shadow install                 # inherits config, ready to build/test
+
+# After review, remove the worktree (shadow state is cleaned up automatically)
+cd ../main-repo
+git worktree remove ../review-pr-42
+```
+
+### Branch switching without worktrees
+
+If you prefer switching branches in a single working tree, use suspend/resume:
+
+```bash
+git-shadow suspend                 # stash shadow changes
+git checkout other-branch
+git-shadow resume                  # restore with 3-way merge if needed
+```
+
+With worktrees, suspend/resume is unnecessary — each worktree has independent state.
+
+### Quick reference
+
+| Task | Command |
+|------|---------|
+| Initial setup | `git-shadow install` → `git-shadow add <file>` |
+| Add a worktree | `git worktree add ...` → `cd` → `git-shadow install` |
+| Worktree-specific file | `git-shadow add --phantom <file>` |
+| Remove a worktree | `git worktree remove <path>` (shadow state cleaned up) |
+| Check status | `git-shadow status` / `git-shadow doctor` |
+| Branch switch (no worktree) | `git-shadow suspend` → checkout → `git-shadow resume` |
 
 ## Important Notes
 
@@ -270,3 +357,25 @@ git-shadow does not support partial staging (`git add -p`) of overlay files. If 
 ### Binary Files
 
 Only text files are supported. Binary files are rejected by `git-shadow add` because the rebase command relies on text-based 3-way merging.
+
+### git worktree Support
+
+git-shadow works with `git worktree` setups. Each worktree is treated as an independent shadow environment:
+
+- **Per-worktree state**: Config, baselines, stash, suspended state, and lockfiles are stored in each worktree's own `.git` directory.
+- **Auto-inherit on install**: When you run `git-shadow install` in a worktree, if the main repo has shadow-managed files and the worktree has no existing config, the file list is automatically inherited. Overlay baselines are regenerated from the worktree's HEAD, and phantom entries are copied as-is. The output message is `inherited N file(s) from main worktree`.
+- **Shared resources**: Git hooks and `.git/info/exclude` entries are stored in the common Git directory and shared across all worktrees.
+- **Diagnostics**: `git-shadow doctor` detects when you are in a worktree and warns if shadow has not been initialized.
+- **Git version**: Git 2.31+ is recommended for full worktree support (`--path-format=absolute`). Older versions (2.20+) are supported via a fallback, but 2.31+ is preferred.
+
+```bash
+# Main repository
+cd my-repo
+git-shadow install
+git-shadow add docker-compose.yml
+
+# Create and set up a worktree — install inherits managed files automatically
+git worktree add ../my-repo-feature feature-branch
+cd ../my-repo-feature
+git-shadow install              # inherits docker-compose.yml from main repo
+```

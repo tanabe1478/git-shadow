@@ -11,7 +11,7 @@ Root source directory. Modules are split by responsibility into focused, small f
 | `path.rs` | Path normalization + URL encoding for flat storage | `normalize_path()`, `encode_path()`, `decode_path()` |
 | `lock.rs` | PID-based lockfile for concurrency safety | `LockStatus`, `acquire_lock()`, `release_lock()` |
 | `fs_util.rs` | Atomic writes, binary detection, size checks | `atomic_write()`, `is_binary()`, `check_size()` |
-| `git.rs` | Git CLI wrapper (no git2 crate) | `GitRepo` struct |
+| `git.rs` | Worktree-aware Git CLI wrapper (no git2 crate) | `GitRepo` (root, git_dir, common_dir, shadow_dir; `hooks_dir()`) |
 | `exclude.rs` | `.git/info/exclude` section management | `ExcludeManager` |
 | `diff_util.rs` | Unified diff formatting with colors | `unified_diff()`, `print_colored_diff()` |
 | `merge.rs` | 3-way merge via `git merge-file -p --diff3` | `three_way_merge()`, `MergeResult` |
@@ -34,6 +34,15 @@ Two error libraries are used intentionally:
 2. Staging operations (`git add`, `git rm --cached`, `git restore --staged`) lack good git2 APIs
 3. Users can reproduce and debug commands by running them manually
 4. File count is small (1-10), so subprocess overhead is negligible
+
+### GitRepo: Worktree-Aware Discovery
+
+`GitRepo::discover()` uses `git rev-parse --path-format=absolute --show-toplevel --git-dir --git-common-dir` to resolve three paths:
+- **root** -- worktree working directory (`--show-toplevel`)
+- **git_dir** -- per-worktree Git directory (`--git-dir`, e.g., `.git/worktrees/<name>`)
+- **common_dir** -- shared Git directory (`--git-common-dir`, e.g., `.git/`)
+
+`shadow_dir` is derived from `git_dir` (per-worktree state). `hooks_dir()` returns `common_dir.join("hooks")` so hooks are shared across worktrees. A `discover_fallback()` handles Git versions < 2.31 that lack `--git-common-dir`.
 
 ### Atomic Writes
 

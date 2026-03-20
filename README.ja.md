@@ -88,6 +88,8 @@ git show HEAD:docker-compose.yml  # クリーンなチーム用の内容のみ
 
 すべてのデータは `.git/shadow/` に保存されます。`.git/` 内にあるため自動的にコミット対象外です。
 
+**worktree 対応**: `git worktree` 環境では、hooks と exclude ルールはワークツリー間で共有されますが、shadow の状態（config, baselines, stash）はワークツリーごとに独立しています。各ワークツリーで `git-shadow install` を実行してください。メインリポジトリに shadow 管理対象ファイルがある場合、`install` 時に自動的にファイルリストが継承されます — overlay のベースラインはワークツリーの HEAD から再生成され、phantom エントリはそのままコピーされます。つまり、ワークツリーのセットアップは `install` コマンド一つで完了します。
+
 ## 安全性
 
 - **原子的書き込み**: 一時ファイル → rename パターンでデータ破損を防止
@@ -102,7 +104,7 @@ git show HEAD:docker-compose.yml  # クリーンなチーム用の内容のみ
 
 ## 動作要件
 
-- Git 2.20+
+- Git 2.20+（worktree の完全サポートには Git 2.31+ を推奨）
 - Rust 1.70+（ソースからビルドする場合のみ）
 
 ## ライセンス
