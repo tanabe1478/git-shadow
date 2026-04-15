@@ -5,9 +5,12 @@ use crate::diff_util;
 use crate::error::ShadowError;
 use crate::git::GitRepo;
 use crate::path;
+use crate::ui;
 
 pub fn run(file: Option<&str>) -> Result<()> {
-    let git = GitRepo::discover(&std::env::current_dir()?)?;
+    let locale = ui::detect_locale();
+    let cwd = std::env::current_dir()?;
+    let git = GitRepo::discover(&cwd)?;
     let config = ShadowConfig::load(&git.shadow_dir)?;
 
     if config.suspended {
@@ -15,7 +18,7 @@ pub fn run(file: Option<&str>) -> Result<()> {
     }
 
     if config.files.is_empty() {
-        println!("no managed files");
+        println!("{}", ui::no_managed_files(locale));
         return Ok(());
     }
 
@@ -23,7 +26,7 @@ pub fn run(file: Option<&str>) -> Result<()> {
 
     for (file_path, entry) in &config.files {
         if let Some(target) = file {
-            let normalized = path::normalize_path(target, &git.root)?;
+            let normalized = path::normalize_path(target, &cwd, &git.root)?;
             if *file_path != normalized {
                 continue;
             }
@@ -32,24 +35,24 @@ pub fn run(file: Option<&str>) -> Result<()> {
 
         match entry.file_type {
             FileType::Overlay => {
-                show_overlay_diff(&git, file_path)?;
+                show_overlay_diff(&git, file_path, locale)?;
             }
             FileType::Phantom => {
-                show_phantom_diff(&git, file_path, entry)?;
+                show_phantom_diff(&git, file_path, entry, locale)?;
             }
         }
     }
 
     if !found {
         if let Some(target) = file {
-            println!("{} is not managed by git-shadow", target);
+            println!("{}", ui::diff_not_managed(locale, target));
         }
     }
 
     Ok(())
 }
 
-fn show_overlay_diff(git: &GitRepo, file_path: &str) -> Result<()> {
+fn show_overlay_diff(git: &GitRepo, file_path: &str, locale: ui::UiLocale) -> Result<()> {
     let encoded = path::encode_path(file_path);
     let baseline_path = git.shadow_dir.join("baselines").join(&encoded);
     let worktree_path = git.root.join(file_path);
@@ -58,21 +61,26 @@ fn show_overlay_diff(git: &GitRepo, file_path: &str) -> Result<()> {
     let current = std::fs::read_to_string(&worktree_path).unwrap_or_default();
 
     if baseline == current {
-        println!("{}: no shadow changes", file_path);
+        println!("{}", ui::diff_no_shadow_changes(locale, file_path));
         return Ok(());
     }
 
     diff_util::print_colored_diff(
         &baseline,
         &current,
-        &format!("a/{} (baseline)", file_path),
-        &format!("b/{} (shadow)", file_path),
+        &ui::diff_baseline_label(locale, file_path),
+        &ui::diff_shadow_label(locale, file_path),
     );
 
     Ok(())
 }
 
-fn show_phantom_diff(git: &GitRepo, file_path: &str, entry: &FileEntry) -> Result<()> {
+fn show_phantom_diff(
+    git: &GitRepo,
+    file_path: &str,
+    entry: &FileEntry,
+    locale: ui::UiLocale,
+) -> Result<()> {
     let worktree_path = git.root.join(file_path);
 
     if entry.is_directory {
@@ -80,15 +88,15 @@ fn show_phantom_diff(git: &GitRepo, file_path: &str, entry: &FileEntry) -> Resul
             let count = std::fs::read_dir(&worktree_path)
                 .map(|entries| entries.count())
                 .unwrap_or(0);
-            println!("{}: phantom directory ({} entries)", file_path, count);
+            println!("{}", ui::diff_phantom_directory(locale, file_path, count));
         } else {
-            println!("{}: phantom directory does not exist", file_path);
+            println!("{}", ui::diff_phantom_directory_missing(locale, file_path));
         }
         return Ok(());
     }
 
     if !worktree_path.exists() {
-        println!("{}: file does not exist", file_path);
+        println!("{}", ui::diff_file_missing(locale, file_path));
         return Ok(());
     }
 
@@ -240,7 +248,7 @@ mod tests {
         config.save(&git.shadow_dir).unwrap();
 
         // Verify we can match specific file
-        let normalized = path::normalize_path("CLAUDE.md", &git.root).unwrap();
+        let normalized = path::normalize_path("CLAUDE.md", &git.root, &git.root).unwrap();
         assert_eq!(normalized, "CLAUDE.md");
         assert!(config.get(&normalized).is_some());
     }

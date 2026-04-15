@@ -5,6 +5,7 @@ use crate::config::ShadowConfig;
 use crate::git::GitRepo;
 use crate::lock;
 use crate::path;
+use crate::ui;
 
 pub fn handle(git: &GitRepo) -> Result<()> {
     let _config = ShadowConfig::load(&git.shadow_dir)?;
@@ -45,7 +46,12 @@ pub fn handle(git: &GitRepo) -> Result<()> {
                 Err(e) => {
                     eprintln!(
                         "{}",
-                        format!("warning: failed to restore {}: {}", normalized, e).yellow()
+                        ui::post_commit_restore_failed(
+                            ui::detect_locale(),
+                            &normalized,
+                            &e.to_string()
+                        )
+                        .yellow()
                     );
                     failed.push(normalized.clone());
                 }
@@ -53,7 +59,12 @@ pub fn handle(git: &GitRepo) -> Result<()> {
             Err(e) => {
                 eprintln!(
                     "{}",
-                    format!("warning: failed to read stash for {}: {}", normalized, e).yellow()
+                    ui::post_commit_read_stash_failed(
+                        ui::detect_locale(),
+                        &normalized,
+                        &e.to_string(),
+                    )
+                    .yellow()
                 );
                 failed.push(normalized.clone());
             }
@@ -67,7 +78,7 @@ pub fn handle(git: &GitRepo) -> Result<()> {
         // Partial failure - keep lock
         eprintln!(
             "{}",
-            "warning: some files could not be restored. Run `git-shadow restore`".yellow()
+            ui::post_commit_partial_failure(ui::detect_locale()).yellow()
         );
         for f in &failed {
             eprintln!("  - {}", f);

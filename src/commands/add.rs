@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use anyhow::{Context, Result};
 use colored::Colorize;
 
@@ -5,18 +7,30 @@ use crate::config::{ExcludeMode, ShadowConfig};
 use crate::error::ShadowError;
 use crate::exclude::ExcludeManager;
 use crate::git::GitRepo;
+use crate::ui;
 use crate::{fs_util, path};
 
 pub fn run(file: &str, phantom: bool, no_exclude: bool, force: bool) -> Result<()> {
-    let git = GitRepo::discover(&std::env::current_dir()?)?;
-    let normalized = path::normalize_path(file, &git.root)?;
+    let cwd = std::env::current_dir()?;
+    let git = GitRepo::discover(&cwd)?;
+    run_with_repo(&git, &cwd, file, phantom, no_exclude, force)
+}
+
+fn run_with_repo(
+    git: &GitRepo,
+    cwd: &Path,
+    file: &str,
+    phantom: bool,
+    no_exclude: bool,
+    force: bool,
+) -> Result<()> {
+    let locale = ui::detect_locale();
+    let normalized = path::normalize_path(file, cwd, &git.root)?;
+    git.ensure_initialized()?;
 
     // Warn if hooks not installed
     if !git.hooks_installed() {
-        eprintln!(
-            "{}",
-            "warning: hooks not installed. Run `git-shadow install`".yellow()
-        );
+        eprintln!("{}", ui::warning_hooks_not_installed(locale).yellow());
     }
 
     let mut config = ShadowConfig::load(&git.shadow_dir)?;
@@ -37,6 +51,7 @@ fn add_overlay(
     normalized: &str,
     force: bool,
 ) -> Result<()> {
+    let locale = ui::detect_locale();
     // Check file is tracked
     if !git.is_tracked(normalized)? {
         return Err(ShadowError::FileNotTracked(normalized.to_string()).into());
@@ -65,14 +80,17 @@ fn add_overlay(
     config.add_overlay(normalized.to_string(), commit)?;
 
     println!(
-        "registered {} as overlay (baseline: {})",
-        normalized,
-        &config
-            .get(normalized)
-            .unwrap()
-            .baseline_commit
-            .as_deref()
-            .unwrap_or("?")[..7]
+        "{}",
+        ui::registered_overlay(
+            locale,
+            normalized,
+            &config
+                .get(normalized)
+                .unwrap()
+                .baseline_commit
+                .as_deref()
+                .unwrap_or("?")[..7],
+        )
     );
     Ok(())
 }
@@ -113,9 +131,15 @@ fn add_phantom(
     config.add_phantom(normalized.to_string(), exclude_mode, is_dir)?;
 
     if is_dir {
-        println!("registered {} as phantom directory", normalized);
+        println!(
+            "{}",
+            ui::registered_phantom_directory(ui::detect_locale(), normalized)
+        );
     } else {
-        println!("registered {} as phantom", normalized);
+        println!(
+            "{}",
+            ui::registered_phantom(ui::detect_locale(), normalized)
+        );
     }
     Ok(())
 }
@@ -339,5 +363,39 @@ mod tests {
         let mut config = ShadowConfig::new();
         let result = add_phantom(&git, &mut config, "CLAUDE.md", false);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_run_requires_install_before_overlay_add() {
+        let (_dir, git) = make_test_repo();
+        std::fs::remove_dir_all(&git.shadow_dir).unwrap();
+
+        let err = run_with_repo(&git, &git.root, "CLAUDE.md", false, false, false).unwrap_err();
+        assert!(err.to_string().contains("Run `git-shadow install`"));
+    }
+
+    #[test]
+    fn test_run_requires_install_before_phantom_add() {
+        let (_dir, git) = make_test_repo();
+        std::fs::remove_dir_all(&git.shadow_dir).unwrap();
+        std::fs::write(git.root.join("local.md"), "# Local\n").unwrap();
+
+        let err = run_with_repo(&git, &git.root, "local.md", true, false, false).unwrap_err();
+        assert!(err.to_string().contains("Run `git-shadow install`"));
+    }
+
+    #[test]
+    fn test_run_rejects_path_outside_repo() {
+        let (_dir, git) = make_test_repo();
+        let outside_dir = git.root.parent().unwrap().join("outside");
+        std::fs::create_dir_all(&outside_dir).unwrap();
+        std::fs::write(outside_dir.join("local.md"), "# Outside\n").unwrap();
+
+        let cwd = git.root.join("src");
+        std::fs::create_dir_all(&cwd).unwrap();
+
+        let err =
+            run_with_repo(&git, &cwd, "../../outside/local.md", true, false, false).unwrap_err();
+        assert!(err.to_string().contains("outside repository"));
     }
 }

@@ -5,8 +5,10 @@ use crate::config::{FileType, ShadowConfig};
 use crate::git::GitRepo;
 use crate::lock::{self, LockStatus};
 use crate::path;
+use crate::ui;
 
 pub fn run() -> Result<()> {
+    let locale = ui::detect_locale();
     let git = GitRepo::discover(&std::env::current_dir()?)?;
     let config = ShadowConfig::load(&git.shadow_dir)?;
 
@@ -18,12 +20,8 @@ pub fn run() -> Result<()> {
             .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
             .collect();
         if !stash_files.is_empty() {
-            println!(
-                "{}",
-                "  warning: stash has remaining files (a previous commit may have been interrupted)"
-                    .yellow()
-            );
-            println!("{}", "    -> Run `git-shadow restore`".yellow());
+            println!("{}", ui::status_warning_stash_remaining(locale).yellow());
+            println!("{}", ui::status_action_run_restore(locale).yellow());
             println!();
         }
     }
@@ -32,38 +30,34 @@ pub fn run() -> Result<()> {
     if let LockStatus::Stale(info) = lock::check_lock(&git.shadow_dir)? {
         println!(
             "{}",
-            format!(
-                "  warning: stale lockfile detected (PID {} no longer exists)",
-                info.pid
-            )
-            .yellow()
+            ui::status_warning_stale_lock(locale, info.pid).yellow()
         );
-        println!("{}", "    -> Run `git-shadow restore`".yellow());
+        println!("{}", ui::status_action_run_restore(locale).yellow());
         println!();
     }
 
     if config.files.is_empty() {
-        println!("no managed files");
+        println!("{}", ui::no_managed_files(locale));
         return Ok(());
     }
 
     if config.suspended {
-        println!(
-            "{}",
-            "  status: SUSPENDED (run `git-shadow resume` to restore shadow changes)".yellow()
-        );
+        println!("{}", ui::status_suspended(locale).yellow());
         println!();
     }
 
-    println!("managed files:");
+    println!("{}", ui::status_heading_managed_files(locale));
     println!();
 
     for (file_path, entry) in &config.files {
         match entry.file_type {
             FileType::Overlay => {
-                println!("  {} (overlay)", file_path);
+                println!("  {} ({})", file_path, ui::label_overlay(locale));
                 if let Some(ref commit) = entry.baseline_commit {
-                    println!("    baseline: {}", &commit[..7.min(commit.len())]);
+                    println!(
+                        "{}",
+                        ui::status_baseline(locale, &commit[..7.min(commit.len())])
+                    );
                 }
 
                 // Show diff stats
@@ -74,13 +68,13 @@ pub fn run() -> Result<()> {
                 if !worktree_path.exists() {
                     println!(
                         "{}",
-                        "    warning: file does not exist in working tree".yellow()
+                        ui::status_warning_file_missing_worktree(locale).yellow()
                     );
                 } else if baseline_path.exists() {
                     let baseline = std::fs::read_to_string(&baseline_path).unwrap_or_default();
                     let current = std::fs::read_to_string(&worktree_path).unwrap_or_default();
                     let (added, removed) = diff_stats(&baseline, &current);
-                    println!("    shadow changes: +{} lines / -{} lines", added, removed);
+                    println!("{}", ui::status_shadow_changes(locale, added, removed));
 
                     // Check baseline drift (hash mismatch + content comparison)
                     if let Some(ref commit) = entry.baseline_commit {
@@ -100,8 +94,8 @@ pub fn run() -> Result<()> {
                                 if content_changed {
                                     println!(
                                         "{}",
-                                        format!(
-                                            "    warning: baseline is outdated ({} -> {})",
+                                        ui::status_warning_baseline_outdated(
+                                            locale,
                                             &commit[..7.min(commit.len())],
                                             &head[..7.min(head.len())]
                                         )
@@ -109,8 +103,7 @@ pub fn run() -> Result<()> {
                                     );
                                     println!(
                                         "{}",
-                                        format!("    -> Run `git-shadow rebase {}`", file_path)
-                                            .yellow()
+                                        ui::status_action_run_rebase(locale, file_path).yellow()
                                     );
                                 }
                             }
@@ -121,17 +114,17 @@ pub fn run() -> Result<()> {
             }
             FileType::Phantom => {
                 let label = if entry.is_directory {
-                    "phantom dir"
+                    ui::label_phantom_dir(locale)
                 } else {
-                    "phantom"
+                    ui::label_phantom(locale)
                 };
                 println!("  {} ({})", file_path, label);
                 match entry.exclude_mode {
                     crate::config::ExcludeMode::GitInfoExclude => {
-                        println!("    exclude: .git/info/exclude");
+                        println!("{}", ui::status_exclude_git_info(locale));
                     }
                     crate::config::ExcludeMode::None => {
-                        println!("    exclude: none (hook protection only)");
+                        println!("{}", ui::status_exclude_none(locale));
                     }
                 }
                 let worktree_path = git.root.join(file_path);
@@ -140,15 +133,18 @@ pub fn run() -> Result<()> {
                         let count = std::fs::read_dir(&worktree_path)
                             .map(|entries| entries.count())
                             .unwrap_or(0);
-                        println!("    contents: {} entries", count);
+                        println!("{}", ui::status_contents(locale, count));
                     } else {
-                        println!("{}", "    warning: directory does not exist".yellow());
+                        println!("{}", ui::status_warning_directory_missing(locale).yellow());
                     }
                 } else if worktree_path.exists() {
                     let metadata = std::fs::metadata(&worktree_path)?;
-                    println!("    file size: {}", format_size(metadata.len()));
+                    println!(
+                        "{}",
+                        ui::status_file_size(locale, &format_size(metadata.len()))
+                    );
                 } else {
-                    println!("{}", "    warning: file does not exist".yellow());
+                    println!("{}", ui::status_warning_file_missing(locale).yellow());
                 }
                 println!();
             }

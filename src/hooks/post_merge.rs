@@ -4,6 +4,7 @@ use colored::Colorize;
 use crate::config::{FileType, ShadowConfig};
 use crate::git::GitRepo;
 use crate::path;
+use crate::ui;
 
 pub fn handle(git: &GitRepo) -> Result<()> {
     let config = ShadowConfig::load(&git.shadow_dir)?;
@@ -27,11 +28,7 @@ pub fn handle(git: &GitRepo) -> Result<()> {
                     if baseline_content != head_content {
                         eprintln!(
                             "{}",
-                            format!(
-                                "warning: baseline for {} is outdated.\n  Run `git-shadow rebase {}`",
-                                file_path, file_path
-                            )
-                            .yellow()
+                            ui::baseline_outdated_warning(ui::detect_locale(), file_path).yellow()
                         );
                     }
                 }

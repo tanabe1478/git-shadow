@@ -1,11 +1,17 @@
-use anyhow::Result;
-use clap::Parser;
-
 use git_shadow::cli::{Cli, Commands};
 use git_shadow::commands;
+use git_shadow::ui;
 
-fn main() -> Result<()> {
-    let cli = Cli::parse();
+fn main() {
+    if let Err(err) = run() {
+        eprintln!("{}", ui::format_error(&err, ui::detect_locale()));
+        std::process::exit(1);
+    }
+}
+
+fn run() -> anyhow::Result<()> {
+    let locale = ui::detect_locale();
+    let cli = Cli::parse_localized(locale);
 
     match cli.command {
         Commands::Install => commands::install::run()?,

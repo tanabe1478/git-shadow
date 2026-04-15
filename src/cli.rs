@@ -1,4 +1,6 @@
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
+
+use crate::ui::UiLocale;
 
 #[derive(Parser)]
 #[command(
@@ -75,4 +77,143 @@ pub enum Commands {
         /// Hook name (pre-commit, post-commit, post-merge)
         hook_name: String,
     },
+}
+
+impl Cli {
+    pub fn parse_localized(locale: UiLocale) -> Self {
+        let command = localize_command(Self::command(), locale);
+        let matches = command.get_matches();
+        Self::from_arg_matches(&matches).unwrap_or_else(|err| err.exit())
+    }
+}
+
+fn localize_command(command: clap::Command, locale: UiLocale) -> clap::Command {
+    let command = command
+        .about(match locale {
+            UiLocale::Ja => "Git リポジトリ内のローカル専用変更を管理します",
+            UiLocale::En => "Manage local-only changes in Git repositories",
+        })
+        .long_about(match locale {
+            UiLocale::Ja => "Git リポジトリ内のローカル専用変更を管理します",
+            UiLocale::En => "Manage local-only changes in Git repositories",
+        });
+
+    localize_subcommands(command, locale)
+}
+
+fn localize_subcommands(command: clap::Command, locale: UiLocale) -> clap::Command {
+    let command = command.mut_subcommand("install", |sub| {
+        sub.about(match locale {
+            UiLocale::Ja => "Git hooks を設定する",
+            UiLocale::En => "Set up Git hooks",
+        })
+    });
+    let command = command.mut_subcommand("add", |sub| {
+        sub.about(match locale {
+            UiLocale::Ja => "ファイルを shadow 管理に登録する",
+            UiLocale::En => "Register a file for shadow management",
+        })
+        .mut_arg("file", |arg| {
+            arg.help(match locale {
+                UiLocale::Ja => "対象ファイルのパス",
+                UiLocale::En => "Target file path",
+            })
+        })
+        .mut_arg("phantom", |arg| {
+            arg.help(match locale {
+                UiLocale::Ja => "phantom (ローカル専用ファイル) として登録する",
+                UiLocale::En => "Register as a phantom (local-only file)",
+            })
+        })
+        .mut_arg("no_exclude", |arg| {
+            arg.help(match locale {
+                UiLocale::Ja => ".git/info/exclude への追加をスキップする (phantom のみ)",
+                UiLocale::En => "Skip adding to .git/info/exclude (phantom only)",
+            })
+        })
+        .mut_arg("force", |arg| {
+            arg.help(match locale {
+                UiLocale::Ja => "ファイルサイズ制限を無視する",
+                UiLocale::En => "Ignore file size limit",
+            })
+        })
+    });
+    let command = command.mut_subcommand("remove", |sub| {
+        sub.about(match locale {
+            UiLocale::Ja => "ファイルを shadow 管理から外す",
+            UiLocale::En => "Unregister a file from shadow management",
+        })
+        .mut_arg("file", |arg| {
+            arg.help(match locale {
+                UiLocale::Ja => "対象ファイルのパス",
+                UiLocale::En => "Target file path",
+            })
+        })
+        .mut_arg("force", |arg| {
+            arg.help(match locale {
+                UiLocale::Ja => "確認プロンプトをスキップする",
+                UiLocale::En => "Skip confirmation prompt",
+            })
+        })
+    });
+    let command = command.mut_subcommand("status", |sub| {
+        sub.about(match locale {
+            UiLocale::Ja => "管理対象ファイルと状態を表示する",
+            UiLocale::En => "Show managed files and their status",
+        })
+    });
+    let command = command.mut_subcommand("diff", |sub| {
+        sub.about(match locale {
+            UiLocale::Ja => "shadow changes を diff 表示する",
+            UiLocale::En => "Show shadow changes as a diff",
+        })
+        .mut_arg("file", |arg| {
+            arg.help(match locale {
+                UiLocale::Ja => "対象ファイルのパス (省略時は全件)",
+                UiLocale::En => "Target file path (omit for all files)",
+            })
+        })
+    });
+    let command = command.mut_subcommand("rebase", |sub| {
+        sub.about(match locale {
+            UiLocale::Ja => "baseline を更新して shadow changes を再適用する",
+            UiLocale::En => "Update baseline and re-apply shadow changes",
+        })
+        .mut_arg("file", |arg| {
+            arg.help(match locale {
+                UiLocale::Ja => "対象ファイルのパス (省略時は全件)",
+                UiLocale::En => "Target file path (omit for all files)",
+            })
+        })
+    });
+    let command = command.mut_subcommand("restore", |sub| {
+        sub.about(match locale {
+            UiLocale::Ja => "異常状態から回復する",
+            UiLocale::En => "Recover from abnormal state",
+        })
+        .mut_arg("file", |arg| {
+            arg.help(match locale {
+                UiLocale::Ja => "対象ファイルのパス (省略時は全件)",
+                UiLocale::En => "Target file path (omit for all files)",
+            })
+        })
+    });
+    let command = command.mut_subcommand("suspend", |sub| {
+        sub.about(match locale {
+            UiLocale::Ja => "ブランチ切り替えのため shadow changes を退避する",
+            UiLocale::En => "Suspend shadow changes for branch switching",
+        })
+    });
+    let command = command.mut_subcommand("resume", |sub| {
+        sub.about(match locale {
+            UiLocale::Ja => "suspend された shadow changes を復元する",
+            UiLocale::En => "Resume suspended shadow changes",
+        })
+    });
+    command.mut_subcommand("doctor", |sub| {
+        sub.about(match locale {
+            UiLocale::Ja => "hooks と設定を診断する",
+            UiLocale::En => "Diagnose hooks and configuration",
+        })
+    })
 }
