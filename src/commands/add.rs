@@ -36,9 +36,9 @@ fn run_with_repo(
     let mut config = ShadowConfig::load(&git.shadow_dir)?;
 
     if phantom {
-        add_phantom(&git, &mut config, &normalized, no_exclude)?;
+        add_phantom(git, &mut config, &normalized, no_exclude)?;
     } else {
-        add_overlay(&git, &mut config, &normalized, force)?;
+        add_overlay(git, &mut config, &normalized, force)?;
     }
 
     config.save(&git.shadow_dir)?;
