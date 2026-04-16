@@ -1,41 +1,59 @@
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 
-/// Normalize a user-provided path to repository-relative format:
-/// - Convert to repo-relative path (using / separator)
-/// - Strip leading ./
-pub fn normalize_path(input: &str, repo_root: &Path) -> Result<String> {
-    // Convert backslashes to forward slashes
+/// Normalize a user-provided path to a repository-relative path:
+/// - Resolve relative inputs against the caller's current working directory
+/// - Reject paths that resolve outside the repository root
+/// - Return a forward-slash relative path without "." or ".." segments
+pub fn normalize_path(input: &str, cwd: &Path, repo_root: &Path) -> Result<String> {
     let input = input.replace('\\', "/");
-
-    // If absolute, try to strip repo_root prefix
-    let relative = if input.starts_with('/') {
-        let root_str = repo_root.to_string_lossy().replace('\\', "/");
-        let root_str = root_str.trim_end_matches('/');
-        if let Some(stripped) = input.strip_prefix(root_str) {
-            stripped.trim_start_matches('/').to_string()
-        } else {
-            bail!(
-                "path '{}' is not inside repository '{}'",
-                input,
-                repo_root.display()
-            );
-        }
-    } else {
-        input.to_string()
-    };
-
-    // Strip leading ./ (possibly repeated)
-    let mut result = relative.as_str();
-    while let Some(stripped) = result.strip_prefix("./") {
-        result = stripped;
+    if input.trim().is_empty() {
+        bail!("path cannot be empty");
     }
 
-    // Strip trailing / (directory indicator)
-    let result = result.trim_end_matches('/');
+    let candidate = if Path::new(&input).is_absolute() {
+        PathBuf::from(&input)
+    } else {
+        cwd.join(&input)
+    };
+    let normalized = normalize_lexical(&candidate);
 
-    Ok(result.to_string())
+    if !normalized.starts_with(repo_root) {
+        bail!(
+            "path '{}' resolves outside repository '{}'",
+            input,
+            repo_root.display()
+        );
+    }
+
+    let relative = normalized
+        .strip_prefix(repo_root)
+        .with_context(|| format!("failed to strip repository prefix from '{}'", input))?;
+
+    if relative.as_os_str().is_empty() {
+        bail!("path '{}' resolves to the repository root", input);
+    }
+
+    Ok(relative.to_string_lossy().replace('\\', "/"))
+}
+
+fn normalize_lexical(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            Component::RootDir => normalized.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::Normal(part) => normalized.push(part),
+        }
+    }
+
+    normalized
 }
 
 /// URL-encode a normalized path for use as filename in baselines/ and stash/:
@@ -139,20 +157,26 @@ mod tests {
     #[test]
     fn test_normalize_strips_leading_dot_slash() {
         let repo = PathBuf::from("/repo");
-        assert_eq!(normalize_path("./CLAUDE.md", &repo).unwrap(), "CLAUDE.md");
+        assert_eq!(
+            normalize_path("./CLAUDE.md", &repo, &repo).unwrap(),
+            "CLAUDE.md"
+        );
     }
 
     #[test]
     fn test_normalize_already_relative() {
         let repo = PathBuf::from("/repo");
-        assert_eq!(normalize_path("CLAUDE.md", &repo).unwrap(), "CLAUDE.md");
+        assert_eq!(
+            normalize_path("CLAUDE.md", &repo, &repo).unwrap(),
+            "CLAUDE.md"
+        );
     }
 
     #[test]
     fn test_normalize_nested_path() {
         let repo = PathBuf::from("/repo");
         assert_eq!(
-            normalize_path("src/components/CLAUDE.md", &repo).unwrap(),
+            normalize_path("src/components/CLAUDE.md", &repo, &repo).unwrap(),
             "src/components/CLAUDE.md"
         );
     }
@@ -161,7 +185,7 @@ mod tests {
     fn test_normalize_backslash_to_forward_slash() {
         let repo = PathBuf::from("/repo");
         assert_eq!(
-            normalize_path("src\\components\\CLAUDE.md", &repo).unwrap(),
+            normalize_path("src\\components\\CLAUDE.md", &repo, &repo).unwrap(),
             "src/components/CLAUDE.md"
         );
     }
@@ -170,7 +194,7 @@ mod tests {
     fn test_normalize_absolute_path_within_repo() {
         let repo = PathBuf::from("/repo");
         assert_eq!(
-            normalize_path("/repo/src/CLAUDE.md", &repo).unwrap(),
+            normalize_path("/repo/src/CLAUDE.md", &repo, &repo).unwrap(),
             "src/CLAUDE.md"
         );
     }
@@ -178,14 +202,14 @@ mod tests {
     #[test]
     fn test_normalize_strips_trailing_slash() {
         let repo = PathBuf::from("/repo");
-        assert_eq!(normalize_path(".claude/", &repo).unwrap(), ".claude");
+        assert_eq!(normalize_path(".claude/", &repo, &repo).unwrap(), ".claude");
     }
 
     #[test]
     fn test_normalize_strips_trailing_slash_nested() {
         let repo = PathBuf::from("/repo");
         assert_eq!(
-            normalize_path("src/components/", &repo).unwrap(),
+            normalize_path("src/components/", &repo, &repo).unwrap(),
             "src/components"
         );
     }
@@ -193,12 +217,43 @@ mod tests {
     #[test]
     fn test_normalize_dir_with_leading_dot_slash() {
         let repo = PathBuf::from("/repo");
-        assert_eq!(normalize_path("./.claude/", &repo).unwrap(), ".claude");
+        assert_eq!(
+            normalize_path("./.claude/", &repo, &repo).unwrap(),
+            ".claude"
+        );
     }
 
     #[test]
     fn test_normalize_strips_multiple_leading_dot_slash() {
         let repo = PathBuf::from("/repo");
-        assert_eq!(normalize_path("././CLAUDE.md", &repo).unwrap(), "CLAUDE.md");
+        assert_eq!(
+            normalize_path("././CLAUDE.md", &repo, &repo).unwrap(),
+            "CLAUDE.md"
+        );
+    }
+
+    #[test]
+    fn test_normalize_resolves_parent_dir_inside_repo() {
+        let repo = PathBuf::from("/repo");
+        let cwd = repo.join("src");
+        assert_eq!(
+            normalize_path("../CLAUDE.md", &cwd, &repo).unwrap(),
+            "CLAUDE.md"
+        );
+    }
+
+    #[test]
+    fn test_normalize_rejects_path_outside_repo() {
+        let repo = PathBuf::from("/repo");
+        let cwd = repo.join("src");
+        let err = normalize_path("../../outside.txt", &cwd, &repo).unwrap_err();
+        assert!(err.to_string().contains("resolves outside repository"));
+    }
+
+    #[test]
+    fn test_normalize_rejects_repo_root() {
+        let repo = PathBuf::from("/repo");
+        let err = normalize_path(".", &repo, &repo).unwrap_err();
+        assert!(err.to_string().contains("repository root"));
     }
 }

@@ -1,46 +1,39 @@
-use anyhow::{bail, Result};
+use anyhow::Result;
 use colored::Colorize;
 use is_terminal::IsTerminal;
 
 use crate::config::{ExcludeMode, FileType, ShadowConfig};
+use crate::error::ShadowError;
 use crate::exclude::ExcludeManager;
 use crate::git::GitRepo;
 use crate::path;
+use crate::ui;
 
 pub fn run(file: &str, force: bool) -> Result<()> {
-    let git = GitRepo::discover(&std::env::current_dir()?)?;
+    let locale = ui::detect_locale();
+    let cwd = std::env::current_dir()?;
+    let git = GitRepo::discover(&cwd)?;
     let mut config = ShadowConfig::load(&git.shadow_dir)?;
-    let normalized = path::normalize_path(file, &git.root)?;
+    let normalized = path::normalize_path(file, &cwd, &git.root)?;
 
     let entry = config
         .get(&normalized)
-        .ok_or_else(|| anyhow::anyhow!("{} is not managed by git-shadow", normalized))?
+        .ok_or_else(|| ShadowError::NotManaged(normalized.clone()))?
         .clone();
 
     // Confirmation prompt
     if !force {
         if !std::io::stdin().is_terminal() {
-            bail!("--force is required in non-interactive mode");
+            return Err(ShadowError::NonInteractiveWithoutForce.into());
         }
 
         let prompt = match entry.file_type {
-            FileType::Overlay => {
-                format!(
-                    "Shadow changes for {} will be discarded. Continue? [y/N]",
-                    normalized
-                )
-            }
+            FileType::Overlay => ui::remove_prompt_overlay(locale, &normalized),
             FileType::Phantom => {
                 if entry.is_directory {
-                    format!(
-                        "{} (directory) will be unregistered from shadow management. The directory and its contents will remain. Continue? [y/N]",
-                        normalized
-                    )
+                    ui::remove_prompt_phantom_directory(locale, &normalized)
                 } else {
-                    format!(
-                        "{} will be unregistered from shadow management. The file itself will remain. Continue? [y/N]",
-                        normalized
-                    )
+                    ui::remove_prompt_phantom(locale, &normalized)
                 }
             }
         };
@@ -50,7 +43,7 @@ pub fn run(file: &str, force: bool) -> Result<()> {
         std::io::stdin().read_line(&mut input)?;
         let input = input.trim().to_lowercase();
         if input != "y" && input != "yes" {
-            println!("aborted");
+            println!("{}", ui::aborted(locale));
             return Ok(());
         }
     }
@@ -67,10 +60,7 @@ pub fn run(file: &str, force: bool) -> Result<()> {
     config.remove(&normalized)?;
     config.save(&git.shadow_dir)?;
 
-    println!(
-        "{}",
-        format!("unregistered {} from shadow management", normalized).green()
-    );
+    println!("{}", ui::unregistered(locale, &normalized).green());
 
     Ok(())
 }

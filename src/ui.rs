@@ -1,0 +1,852 @@
+use crate::error::ShadowError;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UiLocale {
+    Ja,
+    En,
+}
+
+pub fn detect_locale() -> UiLocale {
+    detect_locale_from_values(
+        ["LC_ALL", "LC_MESSAGES", "LANG"]
+            .into_iter()
+            .filter_map(|key| std::env::var(key).ok()),
+    )
+}
+
+pub fn format_error(err: &anyhow::Error, locale: UiLocale) -> String {
+    if let Some(shadow_error) = find_shadow_error(err) {
+        return format_shadow_error(shadow_error, locale);
+    }
+
+    match locale {
+        UiLocale::Ja => format!("エラー: {}", err),
+        UiLocale::En => format!("Error: {}", err),
+    }
+}
+
+pub fn warning_hooks_not_installed(locale: UiLocale) -> &'static str {
+    choose(
+        locale,
+        "warning: hooks が未インストールです。`git-shadow install` を実行してください",
+        "warning: hooks not installed. Run `git-shadow install`",
+    )
+}
+
+pub fn registered_overlay(locale: UiLocale, path: &str, baseline: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!("{path} を overlay として登録しました (baseline: {baseline})"),
+        UiLocale::En => format!("registered {path} as overlay (baseline: {baseline})"),
+    }
+}
+
+pub fn registered_phantom(locale: UiLocale, path: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!("{path} を phantom として登録しました"),
+        UiLocale::En => format!("registered {path} as phantom"),
+    }
+}
+
+pub fn registered_phantom_directory(locale: UiLocale, path: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!("{path} を phantom directory として登録しました"),
+        UiLocale::En => format!("registered {path} as phantom directory"),
+    }
+}
+
+pub fn no_managed_files(locale: UiLocale) -> &'static str {
+    choose(locale, "管理対象ファイルはありません", "no managed files")
+}
+
+pub fn not_managed_message(locale: UiLocale, path: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!("{path} は git-shadow の管理対象ではありません"),
+        UiLocale::En => format!("{path} is not managed by git-shadow"),
+    }
+}
+
+pub fn remove_prompt_overlay(locale: UiLocale, path: &str) -> String {
+    match locale {
+        UiLocale::Ja => {
+            format!("{path} の shadow changes は破棄されます。続行しますか? [y/N]")
+        }
+        UiLocale::En => {
+            format!("Shadow changes for {path} will be discarded. Continue? [y/N]")
+        }
+    }
+}
+
+pub fn remove_prompt_phantom(locale: UiLocale, path: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!(
+            "{path} を shadow 管理から外します。ファイル自体は残ります。続行しますか? [y/N]"
+        ),
+        UiLocale::En => format!(
+            "{path} will be unregistered from shadow management. The file itself will remain. Continue? [y/N]"
+        ),
+    }
+}
+
+pub fn remove_prompt_phantom_directory(locale: UiLocale, path: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!(
+            "{path} (directory) を shadow 管理から外します。ディレクトリと中身は残ります。続行しますか? [y/N]"
+        ),
+        UiLocale::En => format!(
+            "{path} (directory) will be unregistered from shadow management. The directory and its contents will remain. Continue? [y/N]"
+        ),
+    }
+}
+
+pub fn aborted(locale: UiLocale) -> &'static str {
+    choose(locale, "中止しました", "aborted")
+}
+
+pub fn unregistered(locale: UiLocale, path: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!("{path} を shadow 管理から解除しました"),
+        UiLocale::En => format!("unregistered {path} from shadow management"),
+    }
+}
+
+pub fn install_success(locale: UiLocale) -> &'static str {
+    choose(
+        locale,
+        "git-shadow hooks をインストールしました",
+        "git-shadow hooks installed successfully",
+    )
+}
+
+pub fn inherited_from_main_worktree(locale: UiLocale, count: usize) -> String {
+    match locale {
+        UiLocale::Ja => format!("main worktree から {count} 件のファイル設定を引き継ぎました"),
+        UiLocale::En => format!("inherited {count} file(s) from main worktree"),
+    }
+}
+
+pub fn diff_not_managed(locale: UiLocale, path: &str) -> String {
+    not_managed_message(locale, path)
+}
+
+pub fn diff_no_shadow_changes(locale: UiLocale, path: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!("{path}: shadow changes はありません"),
+        UiLocale::En => format!("{path}: no shadow changes"),
+    }
+}
+
+pub fn diff_phantom_directory(locale: UiLocale, path: &str, count: usize) -> String {
+    match locale {
+        UiLocale::Ja => format!("{path}: phantom directory ({count} entries)"),
+        UiLocale::En => format!("{path}: phantom directory ({count} entries)"),
+    }
+}
+
+pub fn diff_phantom_directory_missing(locale: UiLocale, path: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!("{path}: phantom directory が存在しません"),
+        UiLocale::En => format!("{path}: phantom directory does not exist"),
+    }
+}
+
+pub fn diff_file_missing(locale: UiLocale, path: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!("{path}: ファイルが存在しません"),
+        UiLocale::En => format!("{path}: file does not exist"),
+    }
+}
+
+pub fn diff_baseline_label(locale: UiLocale, path: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!("a/{path} (baseline)"),
+        UiLocale::En => format!("a/{path} (baseline)"),
+    }
+}
+
+pub fn diff_shadow_label(locale: UiLocale, path: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!("b/{path} (shadow)"),
+        UiLocale::En => format!("b/{path} (shadow)"),
+    }
+}
+
+pub fn restore_nothing(locale: UiLocale) -> &'static str {
+    choose(locale, "復旧するものはありません", "nothing to restore")
+}
+
+pub fn restore_heading(locale: UiLocale) -> &'static str {
+    choose(locale, "復旧したファイル:", "restored files:")
+}
+
+pub fn lockfile_removed(locale: UiLocale) -> &'static str {
+    choose(locale, "lockfile を削除しました", "lockfile removed")
+}
+
+pub fn suspend_no_managed_files(locale: UiLocale) -> &'static str {
+    choose(
+        locale,
+        "suspend する管理対象ファイルはありません",
+        "no managed files to suspend",
+    )
+}
+
+pub fn suspend_success(locale: UiLocale, count: usize) -> String {
+    match locale {
+        UiLocale::Ja => format!("{count} 件の shadow changes を suspend しました"),
+        UiLocale::En => format!("shadow changes suspended for {count} file(s)"),
+    }
+}
+
+pub fn suspend_worktree_clean(locale: UiLocale) -> &'static str {
+    choose(
+        locale,
+        "working tree は clean になりました。ブランチを切り替えられます",
+        "working tree is now clean — you can switch branches",
+    )
+}
+
+pub fn resume_success(locale: UiLocale, count: usize) -> String {
+    match locale {
+        UiLocale::Ja => format!("{count} 件の shadow changes を resume しました"),
+        UiLocale::En => format!("shadow changes resumed for {count} file(s)"),
+    }
+}
+
+pub fn resume_warning_no_suspended_content(locale: UiLocale, path: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!("warning: {path} の suspended content がありません"),
+        UiLocale::En => format!("warning: no suspended content for {path}"),
+    }
+}
+
+pub fn resume_restored_file_absent_from_head(locale: UiLocale, path: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!("{path}: shadow changes を戻しました (HEAD にファイルなし)"),
+        UiLocale::En => format!("{path}: shadow changes restored (file absent from HEAD)"),
+    }
+}
+
+pub fn resume_restored_shadow_changes(locale: UiLocale, path: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!("{path}: shadow changes を戻しました"),
+        UiLocale::En => format!("{path}: shadow changes restored"),
+    }
+}
+
+pub fn resume_conflicts(locale: UiLocale, path: &str) -> String {
+    match locale {
+        UiLocale::Ja => {
+            format!("warning: {path} で conflict が発生しました。手動で解消してください")
+        }
+        UiLocale::En => format!("warning: conflicts detected in {path}. Please resolve manually"),
+    }
+}
+
+pub fn resume_merged(locale: UiLocale, path: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!("{path}: baseline を更新し shadow changes を merge しました"),
+        UiLocale::En => format!("{path}: baseline updated and shadow changes merged"),
+    }
+}
+
+pub fn resume_phantom_restored(locale: UiLocale, path: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!("{path}: phantom file を復元しました"),
+        UiLocale::En => format!("{path}: phantom file restored"),
+    }
+}
+
+pub fn rebase_no_overlay_files(locale: UiLocale) -> &'static str {
+    choose(
+        locale,
+        "overlay ファイルはありません",
+        "no overlay files found",
+    )
+}
+
+pub fn rebase_commit_ref_updated(locale: UiLocale, path: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!("{path}: baseline の内容は同じでした (commit ref を更新)"),
+        UiLocale::En => format!("{path}: baseline content unchanged (commit ref updated)"),
+    }
+}
+
+pub fn rebase_conflicts(locale: UiLocale, path: &str) -> String {
+    match locale {
+        UiLocale::Ja => {
+            format!("warning: {path} で conflict が発生しました。手動で解消してください")
+        }
+        UiLocale::En => format!("warning: conflicts detected in {path}. Please resolve manually"),
+    }
+}
+
+pub fn rebase_updated(locale: UiLocale, path: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!("{path} の baseline を更新しました"),
+        UiLocale::En => format!("baseline updated for {path}"),
+    }
+}
+
+pub fn baseline_outdated_warning(locale: UiLocale, path: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!(
+            "warning: {path} の baseline は古くなっています。`git-shadow rebase {path}` を実行してください"
+        ),
+        UiLocale::En => format!(
+            "warning: baseline for {path} is outdated. Run `git-shadow rebase {path}`"
+        ),
+    }
+}
+
+pub fn post_commit_restore_failed(locale: UiLocale, path: &str, error: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!("warning: {path} の復元に失敗しました: {error}"),
+        UiLocale::En => format!("warning: failed to restore {path}: {error}"),
+    }
+}
+
+pub fn post_commit_read_stash_failed(locale: UiLocale, path: &str, error: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!("warning: {path} の stash 読み込みに失敗しました: {error}"),
+        UiLocale::En => format!("warning: failed to read stash for {path}: {error}"),
+    }
+}
+
+pub fn post_commit_partial_failure(locale: UiLocale) -> &'static str {
+    choose(
+        locale,
+        "warning: 復元できなかったファイルがあります。`git-shadow restore` を実行してください",
+        "warning: some files could not be restored. Run `git-shadow restore`",
+    )
+}
+
+pub fn doctor_all_checks_passed(locale: UiLocale) -> &'static str {
+    choose(
+        locale,
+        "すべてのチェックを通過しました",
+        "all checks passed",
+    )
+}
+
+pub fn doctor_issues_heading(locale: UiLocale) -> &'static str {
+    choose(locale, "issues:", "issues:")
+}
+
+pub fn doctor_warnings_heading(locale: UiLocale) -> &'static str {
+    choose(locale, "warnings:", "warnings:")
+}
+
+pub fn doctor_hook_missing(locale: UiLocale, hook: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!("{hook} hook が存在しません"),
+        UiLocale::En => format!("{hook} hook does not exist"),
+    }
+}
+
+pub fn doctor_hook_not_executable(locale: UiLocale, hook: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!("{hook} hook に実行権限がありません"),
+        UiLocale::En => format!("{hook} hook is not executable"),
+    }
+}
+
+pub fn doctor_hook_not_calling_shadow(locale: UiLocale, hook: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!("{hook} hook が git-shadow を呼び出していません"),
+        UiLocale::En => format!("{hook} hook does not call git-shadow"),
+    }
+}
+
+pub fn doctor_competing_hook_manager(locale: UiLocale, marker: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!("競合する hook manager を検出しました: {marker}"),
+        UiLocale::En => format!("competing hook manager detected: {marker}"),
+    }
+}
+
+pub fn doctor_overlay_missing_worktree(locale: UiLocale, path: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!("{path} が working tree に存在しません"),
+        UiLocale::En => format!("{path} does not exist in working tree"),
+    }
+}
+
+pub fn doctor_baseline_missing(locale: UiLocale, path: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!("{path} の baseline file が存在しません"),
+        UiLocale::En => format!("baseline file for {path} does not exist"),
+    }
+}
+
+pub fn doctor_phantom_dir_missing(locale: UiLocale, path: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!("{path} (phantom dir) が working tree に存在しません"),
+        UiLocale::En => format!("{path} (phantom dir) does not exist in working tree"),
+    }
+}
+
+pub fn doctor_phantom_missing(locale: UiLocale, path: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!("{path} (phantom) が working tree に存在しません"),
+        UiLocale::En => format!("{path} (phantom) does not exist in working tree"),
+    }
+}
+
+pub fn doctor_stash_remaining(locale: UiLocale) -> &'static str {
+    choose(
+        locale,
+        "stash に残りファイルがあります。`git-shadow restore` を実行してください",
+        "stash has remaining files. Run `git-shadow restore`",
+    )
+}
+
+pub fn doctor_suspended(locale: UiLocale) -> &'static str {
+    choose(
+        locale,
+        "shadow changes は suspend 中です。`git-shadow resume` を実行してください",
+        "shadow changes are suspended. Run `git-shadow resume`",
+    )
+}
+
+pub fn doctor_suspended_dir_missing(locale: UiLocale) -> &'static str {
+    choose(
+        locale,
+        "suspended directory がありません (状態が壊れている可能性があります)",
+        "suspended directory is missing (state may be corrupted)",
+    )
+}
+
+pub fn doctor_worktree_not_initialized(locale: UiLocale) -> &'static str {
+    choose(
+        locale,
+        "worktree を検出しましたが、この worktree では git-shadow が未初期化です。`git-shadow install` を実行してください",
+        "worktree detected but git-shadow is not initialized here. Run `git-shadow install` to set up this worktree",
+    )
+}
+
+pub fn doctor_worktree_no_config(locale: UiLocale) -> &'static str {
+    choose(
+        locale,
+        "worktree を検出しましたが shadow config がありません。`git-shadow add <file>` でこの worktree のファイルを登録してください",
+        "worktree detected but no shadow config found. Run `git-shadow add <file>` to register files in this worktree",
+    )
+}
+
+pub fn doctor_stale_lock(locale: UiLocale, pid: u32) -> String {
+    match locale {
+        UiLocale::Ja => format!(
+            "stale lockfile を検出しました (PID {pid})。`git-shadow restore` を実行してください"
+        ),
+        UiLocale::En => format!("stale lockfile detected (PID {pid}). Run `git-shadow restore`"),
+    }
+}
+
+pub fn doctor_lock_held(locale: UiLocale, pid: u32) -> String {
+    match locale {
+        UiLocale::Ja => format!("lockfile は別プロセス (PID {pid}) が保持しています"),
+        UiLocale::En => format!("lockfile is held by another process (PID {pid})"),
+    }
+}
+
+pub fn status_warning_stash_remaining(locale: UiLocale) -> &'static str {
+    choose(
+        locale,
+        "  warning: stash に残りファイルがあります (前回の commit が中断された可能性があります)",
+        "  warning: stash has remaining files (a previous commit may have been interrupted)",
+    )
+}
+
+pub fn status_warning_stale_lock(locale: UiLocale, pid: u32) -> String {
+    match locale {
+        UiLocale::Ja => {
+            format!("  warning: stale lockfile を検出しました (PID {pid} は既に存在しません)")
+        }
+        UiLocale::En => {
+            format!("  warning: stale lockfile detected (PID {pid} no longer exists)")
+        }
+    }
+}
+
+pub fn status_action_run_restore(locale: UiLocale) -> &'static str {
+    choose(
+        locale,
+        "    -> `git-shadow restore` を実行",
+        "    -> Run `git-shadow restore`",
+    )
+}
+
+pub fn status_suspended(locale: UiLocale) -> &'static str {
+    choose(
+        locale,
+        "  status: SUSPENDED (`git-shadow resume` で shadow changes を戻します)",
+        "  status: SUSPENDED (run `git-shadow resume` to restore shadow changes)",
+    )
+}
+
+pub fn status_heading_managed_files(locale: UiLocale) -> &'static str {
+    choose(locale, "managed files:", "managed files:")
+}
+
+pub fn label_overlay(locale: UiLocale) -> &'static str {
+    choose(locale, "overlay", "overlay")
+}
+
+pub fn label_phantom(locale: UiLocale) -> &'static str {
+    choose(locale, "phantom", "phantom")
+}
+
+pub fn label_phantom_dir(locale: UiLocale) -> &'static str {
+    choose(locale, "phantom dir", "phantom dir")
+}
+
+pub fn status_baseline(locale: UiLocale, commit: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!("    baseline: {commit}"),
+        UiLocale::En => format!("    baseline: {commit}"),
+    }
+}
+
+pub fn status_warning_file_missing_worktree(locale: UiLocale) -> &'static str {
+    choose(
+        locale,
+        "    warning: file が working tree に存在しません",
+        "    warning: file does not exist in working tree",
+    )
+}
+
+pub fn status_shadow_changes(locale: UiLocale, added: usize, removed: usize) -> String {
+    match locale {
+        UiLocale::Ja => format!("    shadow changes: +{added} 行 / -{removed} 行"),
+        UiLocale::En => format!("    shadow changes: +{added} lines / -{removed} lines"),
+    }
+}
+
+pub fn status_warning_baseline_outdated(
+    locale: UiLocale,
+    old_commit: &str,
+    new_commit: &str,
+) -> String {
+    match locale {
+        UiLocale::Ja => {
+            format!("    warning: baseline が古くなっています ({old_commit} -> {new_commit})")
+        }
+        UiLocale::En => {
+            format!("    warning: baseline is outdated ({old_commit} -> {new_commit})")
+        }
+    }
+}
+
+pub fn status_action_run_rebase(locale: UiLocale, path: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!("    -> `git-shadow rebase {path}` を実行"),
+        UiLocale::En => format!("    -> Run `git-shadow rebase {path}`"),
+    }
+}
+
+pub fn status_exclude_git_info(locale: UiLocale) -> &'static str {
+    choose(
+        locale,
+        "    exclude: .git/info/exclude",
+        "    exclude: .git/info/exclude",
+    )
+}
+
+pub fn status_exclude_none(locale: UiLocale) -> &'static str {
+    choose(
+        locale,
+        "    exclude: なし (hook 保護のみ)",
+        "    exclude: none (hook protection only)",
+    )
+}
+
+pub fn status_contents(locale: UiLocale, count: usize) -> String {
+    match locale {
+        UiLocale::Ja => format!("    contents: {count} entries"),
+        UiLocale::En => format!("    contents: {count} entries"),
+    }
+}
+
+pub fn status_warning_directory_missing(locale: UiLocale) -> &'static str {
+    choose(
+        locale,
+        "    warning: directory が存在しません",
+        "    warning: directory does not exist",
+    )
+}
+
+pub fn status_warning_file_missing(locale: UiLocale) -> &'static str {
+    choose(
+        locale,
+        "    warning: file が存在しません",
+        "    warning: file does not exist",
+    )
+}
+
+pub fn status_file_size(locale: UiLocale, size: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!("    file size: {size}"),
+        UiLocale::En => format!("    file size: {size}"),
+    }
+}
+
+fn choose(locale: UiLocale, ja: &'static str, en: &'static str) -> &'static str {
+    match locale {
+        UiLocale::Ja => ja,
+        UiLocale::En => en,
+    }
+}
+
+fn find_shadow_error(err: &anyhow::Error) -> Option<&ShadowError> {
+    err.chain()
+        .find_map(|cause| cause.downcast_ref::<ShadowError>())
+}
+
+fn format_shadow_error(err: &ShadowError, locale: UiLocale) -> String {
+    match locale {
+        UiLocale::Ja => format_shadow_error_ja(err),
+        UiLocale::En => format_shadow_error_en(err),
+    }
+}
+
+fn format_shadow_error_ja(err: &ShadowError) -> String {
+    match err {
+        ShadowError::NotAGitRepo => "エラー: Git リポジトリではありません".to_string(),
+        ShadowError::FileNotTracked(path) => {
+            format!("エラー: `{path}` は Git に追跡されていません")
+        }
+        ShadowError::AlreadyManaged(path) => {
+            format!("エラー: `{path}` は既に git-shadow の管理対象です")
+        }
+        ShadowError::NotManaged(path) => {
+            format!("エラー: `{path}` は git-shadow の管理対象ではありません")
+        }
+        ShadowError::BinaryFile(path) => {
+            format!("エラー: `{path}` はバイナリファイルです")
+        }
+        ShadowError::FileTooLarge(path, size, limit) => format!(
+            "エラー: `{path}` がサイズ制限を超えています ({size} bytes > {limit} bytes)。`--force` を使ってください"
+        ),
+        ShadowError::PartialStage(file) => format!(
+            "コミットを止めました: shadow 管理中の `{file}` が部分的に stage されています。\n\
+             対処:\n\
+             1. `git add {file}` でファイル全体を stage し直す\n\
+             2. もう一度 `git commit` する"
+        ),
+        ShadowError::Suspended => "\
+コミットを止めました: shadow changes が suspend されたままです。\n\
+対処:\n\
+1. `git-shadow resume` を実行して shadow changes を戻す\n\
+2. 必要なら内容を確認してから `git commit` をやり直す"
+            .to_string(),
+        ShadowError::StashRemaining => "\
+コミットを止めました: 前回の commit 処理の残骸が `.git/shadow/stash/` に残っています。\n\
+対処:\n\
+1. `git-shadow restore` を実行して stash と lock を回復する\n\
+2. `git status` で作業ツリーを確認する\n\
+3. もう一度 `git commit` する"
+            .to_string(),
+        ShadowError::BaselineMissing(file) => format!(
+            "コミットを止めました: `{file}` の baseline が見つかりません。\n\
+             対処:\n\
+             1. `{file}` の現在内容を残したいなら先に別の場所へ退避する\n\
+             2. `git-shadow remove --force {file}` で登録を外す\n\
+             3. `git-shadow add {file}` で登録し直し、必要なら local changes を戻す"
+        ),
+        ShadowError::FileMissing(file) => format!(
+            "コミットを止めました: overlay 管理中の `{file}` が作業ツリーにありません。\n\
+             対処:\n\
+             1. 誤って消したなら `git restore --source=HEAD -- {file}` で戻す\n\
+             2. もう管理しないなら `git-shadow remove --force {file}` を実行する\n\
+             3. その後でもう一度 `git commit` する"
+        ),
+        ShadowError::UnstageFailure(file) => format!(
+            "コミットを止めました: phantom の `{file}` を index から外せませんでした。\n\
+             対処:\n\
+             1. `git reset -- {file}` を実行する\n\
+             2. `git status` で stage 状態を確認する\n\
+             3. もう一度 `git commit` する"
+        ),
+        ShadowError::LockHeld { pid, timestamp } => format!(
+            "コミットを止めました: 別の git-shadow 処理が lock を保持しています。\n\
+             詳細: PID {pid}, started: {timestamp}\n\
+             対処:\n\
+             1. その commit / hook 処理が終わるまで待つ\n\
+             2. もし既に止まっているはずなら `git-shadow restore` を実行する\n\
+             3. その後で `git commit` をやり直す"
+        ),
+        ShadowError::StaleLock(pid) => format!(
+            "コミットを止めました: stale lock が残っています。\n\
+             詳細: PID {pid} は既に存在しません。\n\
+             対処:\n\
+             1. `git-shadow restore` を実行して lock を片付ける\n\
+             2. `git status` を確認する\n\
+             3. もう一度 `git commit` する"
+        ),
+        ShadowError::NotInitialized => "\
+エラー: git-shadow がまだ初期化されていません。\n\
+対処:\n\
+1. リポジトリで `git-shadow install` を実行する\n\
+2. その後に `git-shadow add ...` や `git commit` をやり直す"
+            .to_string(),
+        ShadowError::AlreadySuspended => {
+            "エラー: shadow changes は既に suspend されています".to_string()
+        }
+        ShadowError::NotSuspended => {
+            "エラー: shadow changes は suspend されていません".to_string()
+        }
+        ShadowError::HooksNotInstalled => {
+            "エラー: hooks が未インストールです。`git-shadow install` を実行してください"
+                .to_string()
+        }
+        ShadowError::NonInteractiveWithoutForce => {
+            "エラー: 非対話モードでは `--force` が必要です".to_string()
+        }
+        ShadowError::GitCommand { command, stderr } => {
+            format!("エラー: Git コマンドに失敗しました: {command}\n{stderr}")
+        }
+        _ => format!("エラー: {}", err),
+    }
+}
+
+fn format_shadow_error_en(err: &ShadowError) -> String {
+    match err {
+        ShadowError::NotAGitRepo => "Error: not a Git repository".to_string(),
+        ShadowError::FileNotTracked(path) => {
+            format!("Error: `{path}` is not tracked by Git")
+        }
+        ShadowError::AlreadyManaged(path) => {
+            format!("Error: `{path}` is already managed by git-shadow")
+        }
+        ShadowError::NotManaged(path) => {
+            format!("Error: `{path}` is not managed by git-shadow")
+        }
+        ShadowError::BinaryFile(path) => format!("Error: `{path}` is a binary file"),
+        ShadowError::FileTooLarge(path, size, limit) => format!(
+            "Error: `{path}` exceeds the size limit ({size} bytes > {limit} bytes). Use `--force` to override"
+        ),
+        ShadowError::PartialStage(file) => format!(
+            "Commit blocked: `{file}` is partially staged while managed by git-shadow.\n\
+             What to do:\n\
+             1. Run `git add {file}` to stage the whole file\n\
+             2. Run `git commit` again"
+        ),
+        ShadowError::Suspended => "\
+Commit blocked: shadow changes are still suspended.\n\
+What to do:\n\
+1. Run `git-shadow resume`\n\
+2. Review the restored changes if needed\n\
+3. Run `git commit` again"
+            .to_string(),
+        ShadowError::StashRemaining => "\
+Commit blocked: leftover files remain in `.git/shadow/stash/` from an earlier interrupted commit.\n\
+What to do:\n\
+1. Run `git-shadow restore`\n\
+2. Check `git status`\n\
+3. Run `git commit` again"
+            .to_string(),
+        ShadowError::BaselineMissing(file) => format!(
+            "Commit blocked: the baseline for `{file}` is missing.\n\
+             What to do:\n\
+             1. Save a copy first if you need the current contents\n\
+             2. Run `git-shadow remove --force {file}`\n\
+             3. Run `git-shadow add {file}` and re-apply your local-only edits if needed"
+        ),
+        ShadowError::FileMissing(file) => format!(
+            "Commit blocked: overlay-managed file `{file}` is missing from the working tree.\n\
+             What to do:\n\
+             1. If you deleted it by accident, run `git restore --source=HEAD -- {file}`\n\
+             2. If you no longer want it managed, run `git-shadow remove --force {file}`\n\
+             3. Run `git commit` again"
+        ),
+        ShadowError::UnstageFailure(file) => format!(
+            "Commit blocked: git-shadow could not unstage phantom file `{file}`.\n\
+             What to do:\n\
+             1. Run `git reset -- {file}`\n\
+             2. Check `git status`\n\
+             3. Run `git commit` again"
+        ),
+        ShadowError::LockHeld { pid, timestamp } => format!(
+            "Commit blocked: another git-shadow process still holds the lock.\n\
+             Details: PID {pid}, started: {timestamp}\n\
+             What to do:\n\
+             1. Wait for the other commit or hook to finish\n\
+             2. If it should already be done, run `git-shadow restore`\n\
+             3. Run `git commit` again"
+        ),
+        ShadowError::StaleLock(pid) => format!(
+            "Commit blocked: a stale lock was found.\n\
+             Details: PID {pid} no longer exists.\n\
+             What to do:\n\
+             1. Run `git-shadow restore`\n\
+             2. Check `git status`\n\
+             3. Run `git commit` again"
+        ),
+        ShadowError::NotInitialized => "\
+Error: git-shadow is not initialized yet.\n\
+What to do:\n\
+1. Run `git-shadow install` in this repository\n\
+2. Retry `git-shadow add ...` or `git commit`"
+            .to_string(),
+        ShadowError::AlreadySuspended => {
+            "Error: shadow changes are already suspended".to_string()
+        }
+        ShadowError::NotSuspended => "Error: shadow changes are not suspended".to_string(),
+        ShadowError::HooksNotInstalled => {
+            "Error: hooks not installed. Run `git-shadow install`".to_string()
+        }
+        ShadowError::NonInteractiveWithoutForce => {
+            "Error: `--force` is required in non-interactive mode".to_string()
+        }
+        ShadowError::GitCommand { command, stderr } => {
+            format!("Error: git command failed: {command}\n{stderr}")
+        }
+        _ => format!("Error: {}", err),
+    }
+}
+
+fn detect_locale_from_values(values: impl IntoIterator<Item = String>) -> UiLocale {
+    for value in values {
+        let normalized = value.to_ascii_lowercase();
+        if normalized.starts_with("ja") {
+            return UiLocale::Ja;
+        }
+        if normalized.starts_with("en") {
+            return UiLocale::En;
+        }
+    }
+
+    UiLocale::En
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_detect_locale_defaults_to_en() {
+        let locale = detect_locale_from_values(Vec::<String>::new());
+        assert_eq!(locale, UiLocale::En);
+    }
+
+    #[test]
+    fn test_detect_locale_prefers_ja() {
+        let locale = detect_locale_from_values(vec!["ja_JP.UTF-8".to_string()]);
+        assert_eq!(locale, UiLocale::Ja);
+    }
+
+    #[test]
+    fn test_format_error_ja_for_partial_stage() {
+        let err = anyhow::Error::new(ShadowError::PartialStage("tracked.txt".to_string()));
+        let message = format_error(&err, UiLocale::Ja);
+        assert!(message.contains("コミットを止めました"));
+        assert!(message.contains("git add tracked.txt"));
+    }
+
+    #[test]
+    fn test_format_error_en_for_stash_remaining() {
+        let err = anyhow::Error::new(ShadowError::StashRemaining);
+        let message = format_error(&err, UiLocale::En);
+        assert!(message.contains("Commit blocked"));
+        assert!(message.contains("git-shadow restore"));
+    }
+}

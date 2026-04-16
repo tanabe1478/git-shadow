@@ -7,9 +7,12 @@ use crate::fs_util;
 use crate::git::GitRepo;
 use crate::merge;
 use crate::path;
+use crate::ui;
 
 pub fn run(file: Option<&str>) -> Result<()> {
-    let git = GitRepo::discover(&std::env::current_dir()?)?;
+    let locale = ui::detect_locale();
+    let cwd = std::env::current_dir()?;
+    let git = GitRepo::discover(&cwd)?;
     let mut config = ShadowConfig::load(&git.shadow_dir)?;
 
     if config.suspended {
@@ -19,7 +22,7 @@ pub fn run(file: Option<&str>) -> Result<()> {
     let head = git.head_commit()?;
 
     if config.files.is_empty() {
-        println!("no managed files");
+        println!("{}", ui::no_managed_files(locale));
         return Ok(());
     }
 
@@ -34,7 +37,7 @@ pub fn run(file: Option<&str>) -> Result<()> {
         }
 
         if let Some(target) = file {
-            let normalized = path::normalize_path(target, &git.root)?;
+            let normalized = path::normalize_path(target, &cwd, &git.root)?;
             if *file_path != normalized {
                 continue;
             }
@@ -48,7 +51,7 @@ pub fn run(file: Option<&str>) -> Result<()> {
         if let Some(target) = file {
             bail!("{} is not managed as overlay", target);
         } else {
-            println!("no overlay files found");
+            println!("{}", ui::rebase_no_overlay_files(locale));
         }
     }
 
@@ -91,8 +94,8 @@ pub(crate) fn rebase_file(
             entry.baseline_commit = Some(new_head.to_string());
         }
         println!(
-            "{}: baseline content unchanged (commit ref updated)",
-            file_path
+            "{}",
+            ui::rebase_commit_ref_updated(ui::detect_locale(), file_path)
         );
         return Ok(());
     }
@@ -119,14 +122,13 @@ pub(crate) fn rebase_file(
     if merge_result.has_conflicts {
         eprintln!(
             "{}",
-            format!(
-                "warning: conflicts detected in {}. Please resolve manually",
-                file_path
-            )
-            .yellow()
+            ui::rebase_conflicts(ui::detect_locale(), file_path).yellow()
         );
     } else {
-        println!("{}", format!("baseline updated for {}", file_path).green());
+        println!(
+            "{}",
+            ui::rebase_updated(ui::detect_locale(), file_path).green()
+        );
     }
 
     Ok(())

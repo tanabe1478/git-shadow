@@ -239,6 +239,18 @@ impl GitRepo {
             })
     }
 
+    /// Check whether install-created shadow directories exist.
+    pub fn ensure_initialized(&self) -> Result<(), ShadowError> {
+        let baselines_dir = self.shadow_dir.join("baselines");
+        let stash_dir = self.shadow_dir.join("stash");
+
+        if baselines_dir.is_dir() && stash_dir.is_dir() {
+            Ok(())
+        } else {
+            Err(ShadowError::NotInitialized)
+        }
+    }
+
     /// Run a git command and return stdout
     fn run_git(&self, args: &[&str]) -> Result<String, ShadowError> {
         let output = Command::new("git")

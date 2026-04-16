@@ -5,11 +5,13 @@ use crate::config::{FileType, ShadowConfig};
 use crate::git::GitRepo;
 use crate::lock::{self, LockStatus};
 use crate::path;
+use crate::ui;
 
 const HOOK_NAMES: &[&str] = &["pre-commit", "post-commit", "post-merge"];
 const COMPETING_HOOKS: &[&str] = &[".husky", ".pre-commit-config.yaml", "lefthook.yml"];
 
 pub fn run() -> Result<()> {
+    let locale = ui::detect_locale();
     let git = GitRepo::discover(&std::env::current_dir()?)?;
     let config = ShadowConfig::load(&git.shadow_dir)?;
 
@@ -17,38 +19,38 @@ pub fn run() -> Result<()> {
     let mut warnings = Vec::new();
 
     // 1. Check hook files
-    check_hooks(&git, &mut issues, &mut warnings);
+    check_hooks(&git, &mut issues, &mut warnings, locale);
 
     // 2. Check competing hook managers
-    check_competing_hooks(&git, &mut warnings);
+    check_competing_hooks(&git, &mut warnings, locale);
 
     // 3. Check config integrity
-    check_config_integrity(&git, &config, &mut issues);
+    check_config_integrity(&git, &config, &mut issues, locale);
 
     // 4. Check stash remnants
-    check_stash(&git, &mut warnings);
+    check_stash(&git, &mut warnings, locale);
 
     // 5. Check lock
-    check_lock(&git, &mut warnings);
+    check_lock(&git, &mut warnings, locale);
 
     // 6. Check suspended state
-    check_suspended(&config, &git, &mut warnings);
+    check_suspended(&config, &git, &mut warnings, locale);
 
     // 7. Check worktree environment
-    check_worktree(&git, &mut warnings);
+    check_worktree(&git, &mut warnings, locale);
 
     // Print results
     if issues.is_empty() && warnings.is_empty() {
-        println!("{}", "all checks passed".green());
+        println!("{}", ui::doctor_all_checks_passed(locale).green());
     } else {
         if !issues.is_empty() {
-            println!("{}", "issues:".red());
+            println!("{}", ui::doctor_issues_heading(locale).red());
             for issue in &issues {
                 println!("  {} {}", "✗".red(), issue);
             }
         }
         if !warnings.is_empty() {
-            println!("{}", "warnings:".yellow());
+            println!("{}", ui::doctor_warnings_heading(locale).yellow());
             for warning in &warnings {
                 println!("  {} {}", "⚠".yellow(), warning);
             }
@@ -58,12 +60,17 @@ pub fn run() -> Result<()> {
     Ok(())
 }
 
-fn check_hooks(git: &GitRepo, issues: &mut Vec<String>, warnings: &mut Vec<String>) {
+fn check_hooks(
+    git: &GitRepo,
+    issues: &mut Vec<String>,
+    warnings: &mut Vec<String>,
+    locale: ui::UiLocale,
+) {
     for hook_name in HOOK_NAMES {
         let hook_path = git.hooks_dir().join(hook_name);
 
         if !hook_path.exists() {
-            issues.push(format!("{} hook does not exist", hook_name));
+            issues.push(ui::doctor_hook_missing(locale, hook_name));
             continue;
         }
 
@@ -73,7 +80,7 @@ fn check_hooks(git: &GitRepo, issues: &mut Vec<String>, warnings: &mut Vec<Strin
             use std::os::unix::fs::PermissionsExt;
             if let Ok(metadata) = std::fs::metadata(&hook_path) {
                 if metadata.permissions().mode() & 0o111 == 0 {
-                    issues.push(format!("{} hook is not executable", hook_name));
+                    issues.push(ui::doctor_hook_not_executable(locale, hook_name));
                 }
             }
         }
@@ -81,56 +88,55 @@ fn check_hooks(git: &GitRepo, issues: &mut Vec<String>, warnings: &mut Vec<Strin
         // Check content calls git-shadow
         if let Ok(content) = std::fs::read_to_string(&hook_path) {
             if !content.contains("git-shadow hook") && !content.contains("git shadow hook") {
-                warnings.push(format!("{} hook does not call git-shadow", hook_name));
+                warnings.push(ui::doctor_hook_not_calling_shadow(locale, hook_name));
             }
         }
     }
 }
 
-fn check_competing_hooks(git: &GitRepo, warnings: &mut Vec<String>) {
+fn check_competing_hooks(git: &GitRepo, warnings: &mut Vec<String>, locale: ui::UiLocale) {
     for marker in COMPETING_HOOKS {
         if git.root.join(marker).exists() {
-            warnings.push(format!("competing hook manager detected: {}", marker));
+            warnings.push(ui::doctor_competing_hook_manager(locale, marker));
         }
     }
 }
 
-fn check_config_integrity(git: &GitRepo, config: &ShadowConfig, issues: &mut Vec<String>) {
+fn check_config_integrity(
+    git: &GitRepo,
+    config: &ShadowConfig,
+    issues: &mut Vec<String>,
+    locale: ui::UiLocale,
+) {
     for (file_path, entry) in &config.files {
         match entry.file_type {
             FileType::Overlay => {
                 let worktree_path = git.root.join(file_path);
                 if !worktree_path.exists() {
-                    issues.push(format!("{} does not exist in working tree", file_path));
+                    issues.push(ui::doctor_overlay_missing_worktree(locale, file_path));
                 }
 
                 let encoded = path::encode_path(file_path);
                 let baseline_path = git.shadow_dir.join("baselines").join(&encoded);
                 if !baseline_path.exists() {
-                    issues.push(format!("baseline file for {} does not exist", file_path));
+                    issues.push(ui::doctor_baseline_missing(locale, file_path));
                 }
             }
             FileType::Phantom => {
                 let worktree_path = git.root.join(file_path);
                 if entry.is_directory {
                     if !worktree_path.is_dir() {
-                        issues.push(format!(
-                            "{} (phantom dir) does not exist in working tree",
-                            file_path
-                        ));
+                        issues.push(ui::doctor_phantom_dir_missing(locale, file_path));
                     }
                 } else if !worktree_path.exists() {
-                    issues.push(format!(
-                        "{} (phantom) does not exist in working tree",
-                        file_path
-                    ));
+                    issues.push(ui::doctor_phantom_missing(locale, file_path));
                 }
             }
         }
     }
 }
 
-fn check_stash(git: &GitRepo, warnings: &mut Vec<String>) {
+fn check_stash(git: &GitRepo, warnings: &mut Vec<String>, locale: ui::UiLocale) {
     let stash_dir = git.shadow_dir.join("stash");
     if stash_dir.exists() {
         let has_files = std::fs::read_dir(&stash_dir)
@@ -143,59 +149,50 @@ fn check_stash(git: &GitRepo, warnings: &mut Vec<String>) {
             .unwrap_or(false);
 
         if has_files {
-            warnings.push("stash has remaining files. Run `git-shadow restore`".to_string());
+            warnings.push(ui::doctor_stash_remaining(locale).to_string());
         }
     }
 }
 
-fn check_suspended(config: &ShadowConfig, git: &GitRepo, warnings: &mut Vec<String>) {
+fn check_suspended(
+    config: &ShadowConfig,
+    git: &GitRepo,
+    warnings: &mut Vec<String>,
+    locale: ui::UiLocale,
+) {
     if config.suspended {
-        warnings.push("shadow changes are suspended. Run `git-shadow resume`".to_string());
+        warnings.push(ui::doctor_suspended(locale).to_string());
 
         // Check if suspended directory exists and has files
         let suspended_dir = git.shadow_dir.join("suspended");
         if !suspended_dir.exists() {
-            warnings.push("suspended directory is missing (state may be corrupted)".to_string());
+            warnings.push(ui::doctor_suspended_dir_missing(locale).to_string());
         }
     }
 }
 
-fn check_worktree(git: &GitRepo, warnings: &mut Vec<String>) {
+fn check_worktree(git: &GitRepo, warnings: &mut Vec<String>, locale: ui::UiLocale) {
     if git.git_dir != git.common_dir {
         // We are in a worktree
         if !git.shadow_dir.exists() {
-            warnings.push(
-                "worktree detected but git-shadow is not initialized here. \
-                 Run `git-shadow install` to set up this worktree"
-                    .to_string(),
-            );
+            warnings.push(ui::doctor_worktree_not_initialized(locale).to_string());
         } else {
             let config_path = git.shadow_dir.join("config.json");
             if !config_path.exists() {
-                warnings.push(
-                    "worktree detected but no shadow config found. \
-                     Run `git-shadow add <file>` to register files in this worktree"
-                        .to_string(),
-                );
+                warnings.push(ui::doctor_worktree_no_config(locale).to_string());
             }
         }
     }
 }
 
-fn check_lock(git: &GitRepo, warnings: &mut Vec<String>) {
+fn check_lock(git: &GitRepo, warnings: &mut Vec<String>, locale: ui::UiLocale) {
     if let Ok(status) = lock::check_lock(&git.shadow_dir) {
         match status {
             LockStatus::Stale(info) => {
-                warnings.push(format!(
-                    "stale lockfile detected (PID {}). Run `git-shadow restore`",
-                    info.pid
-                ));
+                warnings.push(ui::doctor_stale_lock(locale, info.pid));
             }
             LockStatus::HeldByOther(info) => {
-                warnings.push(format!(
-                    "lockfile is held by another process (PID {})",
-                    info.pid
-                ));
+                warnings.push(ui::doctor_lock_held(locale, info.pid));
             }
             _ => {}
         }
@@ -208,6 +205,7 @@ mod tests {
     use crate::fs_util;
     use crate::git::GitRepo;
     use crate::path;
+    use crate::ui::UiLocale;
 
     fn make_test_repo() -> (tempfile::TempDir, GitRepo) {
         let dir = tempfile::tempdir().unwrap();
@@ -251,7 +249,7 @@ mod tests {
         let mut issues = Vec::new();
         let mut warnings = Vec::new();
 
-        super::check_hooks(&git, &mut issues, &mut warnings);
+        super::check_hooks(&git, &mut issues, &mut warnings, UiLocale::En);
 
         // Hooks not installed yet
         assert!(!issues.is_empty());
@@ -281,7 +279,7 @@ mod tests {
 
         let mut issues = Vec::new();
         let mut warnings = Vec::new();
-        super::check_hooks(&git, &mut issues, &mut warnings);
+        super::check_hooks(&git, &mut issues, &mut warnings, UiLocale::En);
 
         assert!(issues.is_empty());
         assert!(warnings.is_empty());
@@ -295,7 +293,7 @@ mod tests {
         std::fs::write(git.root.join(".pre-commit-config.yaml"), "repos: []\n").unwrap();
 
         let mut warnings = Vec::new();
-        super::check_competing_hooks(&git, &mut warnings);
+        super::check_competing_hooks(&git, &mut warnings, UiLocale::En);
 
         assert!(!warnings.is_empty());
         assert!(warnings
@@ -323,7 +321,7 @@ mod tests {
         std::fs::remove_file(git.root.join("CLAUDE.md")).unwrap();
 
         let mut issues = Vec::new();
-        super::check_config_integrity(&git, &config, &mut issues);
+        super::check_config_integrity(&git, &config, &mut issues, UiLocale::En);
 
         assert!(issues
             .iter()
@@ -341,7 +339,7 @@ mod tests {
         config.save(&git.shadow_dir).unwrap();
 
         let mut issues = Vec::new();
-        super::check_config_integrity(&git, &config, &mut issues);
+        super::check_config_integrity(&git, &config, &mut issues, UiLocale::En);
 
         assert!(issues.iter().any(|i| i.contains("baseline file for")));
     }
@@ -353,7 +351,7 @@ mod tests {
         std::fs::write(git.shadow_dir.join("stash").join("old.md"), "remnant").unwrap();
 
         let mut warnings = Vec::new();
-        super::check_stash(&git, &mut warnings);
+        super::check_stash(&git, &mut warnings, UiLocale::En);
 
         assert!(!warnings.is_empty());
         assert!(warnings.iter().any(|w| w.contains("stash")));
@@ -371,7 +369,7 @@ mod tests {
         .unwrap();
 
         let mut warnings = Vec::new();
-        super::check_lock(&git, &mut warnings);
+        super::check_lock(&git, &mut warnings, UiLocale::En);
 
         assert!(!warnings.is_empty());
         assert!(warnings.iter().any(|w| w.contains("stale lockfile")));
@@ -393,7 +391,7 @@ mod tests {
         config.save(&git.shadow_dir).unwrap();
 
         let mut issues = Vec::new();
-        super::check_config_integrity(&git, &config, &mut issues);
+        super::check_config_integrity(&git, &config, &mut issues, UiLocale::En);
 
         assert!(
             issues.iter().any(|i| i.contains("phantom dir")),
@@ -418,7 +416,7 @@ mod tests {
         config.save(&git.shadow_dir).unwrap();
 
         let mut issues = Vec::new();
-        super::check_config_integrity(&git, &config, &mut issues);
+        super::check_config_integrity(&git, &config, &mut issues, UiLocale::En);
 
         assert!(
             issues.is_empty(),
@@ -452,11 +450,11 @@ mod tests {
 
         let mut issues = Vec::new();
         let mut warnings = Vec::new();
-        super::check_hooks(&git, &mut issues, &mut warnings);
-        super::check_competing_hooks(&git, &mut warnings);
-        super::check_config_integrity(&git, &config, &mut issues);
-        super::check_stash(&git, &mut warnings);
-        super::check_lock(&git, &mut warnings);
+        super::check_hooks(&git, &mut issues, &mut warnings, UiLocale::En);
+        super::check_competing_hooks(&git, &mut warnings, UiLocale::En);
+        super::check_config_integrity(&git, &config, &mut issues, UiLocale::En);
+        super::check_stash(&git, &mut warnings, UiLocale::En);
+        super::check_lock(&git, &mut warnings, UiLocale::En);
 
         assert!(issues.is_empty());
         assert!(warnings.is_empty());

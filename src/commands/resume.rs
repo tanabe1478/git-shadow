@@ -7,8 +7,10 @@ use crate::fs_util;
 use crate::git::GitRepo;
 use crate::merge;
 use crate::path;
+use crate::ui;
 
 pub fn run() -> Result<()> {
+    let locale = ui::detect_locale();
     let git = GitRepo::discover(&std::env::current_dir()?)?;
     let mut config = ShadowConfig::load(&git.shadow_dir)?;
 
@@ -51,10 +53,7 @@ pub fn run() -> Result<()> {
     config.suspended = false;
     config.save(&git.shadow_dir)?;
 
-    println!(
-        "{}",
-        format!("shadow changes resumed for {} file(s)", count).green()
-    );
+    println!("{}", ui::resume_success(locale, count).green());
 
     Ok(())
 }
@@ -80,7 +79,7 @@ fn resume_overlay(
     if !suspend_path.exists() {
         eprintln!(
             "{}",
-            format!("warning: no suspended content for {}", file_path).yellow()
+            ui::resume_warning_no_suspended_content(ui::detect_locale(), file_path).yellow()
         );
         return Ok(());
     }
@@ -98,8 +97,8 @@ fn resume_overlay(
             std::fs::write(&worktree_path, suspended_content.as_bytes())
                 .with_context(|| format!("failed to restore {}", file_path))?;
             println!(
-                "{}: shadow changes restored (file absent from HEAD)",
-                file_path
+                "{}",
+                ui::resume_restored_file_absent_from_head(ui::detect_locale(), file_path)
             );
             return Ok(());
         }
@@ -109,7 +108,10 @@ fn resume_overlay(
         // Baseline unchanged — restore suspended content directly
         std::fs::write(&worktree_path, suspended_content.as_bytes())
             .with_context(|| format!("failed to restore {}", file_path))?;
-        println!("{}: shadow changes restored", file_path);
+        println!(
+            "{}",
+            ui::resume_restored_shadow_changes(ui::detect_locale(), file_path)
+        );
     } else {
         // Baseline changed — 3-way merge
         let merge_result = merge::three_way_merge(
@@ -133,14 +135,10 @@ fn resume_overlay(
         if merge_result.has_conflicts {
             eprintln!(
                 "{}",
-                format!(
-                    "warning: conflicts detected in {}. Please resolve manually",
-                    file_path
-                )
-                .yellow()
+                ui::resume_conflicts(ui::detect_locale(), file_path).yellow()
             );
         } else {
-            println!("{}: baseline updated and shadow changes merged", file_path);
+            println!("{}", ui::resume_merged(ui::detect_locale(), file_path));
         }
     }
 
@@ -155,7 +153,7 @@ fn resume_phantom(git: &GitRepo, suspended_dir: &std::path::Path, file_path: &st
     if !suspend_path.exists() {
         eprintln!(
             "{}",
-            format!("warning: no suspended content for {}", file_path).yellow()
+            ui::resume_warning_no_suspended_content(ui::detect_locale(), file_path).yellow()
         );
         return Ok(());
     }
@@ -172,7 +170,10 @@ fn resume_phantom(git: &GitRepo, suspended_dir: &std::path::Path, file_path: &st
     std::fs::write(&worktree_path, &content)
         .with_context(|| format!("failed to restore {}", file_path))?;
 
-    println!("{}: phantom file restored", file_path);
+    println!(
+        "{}",
+        ui::resume_phantom_restored(ui::detect_locale(), file_path)
+    );
 
     Ok(())
 }

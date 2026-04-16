@@ -5,6 +5,7 @@ use crate::config::{FileEntry, FileType, ShadowConfig};
 use crate::error::ShadowError;
 use crate::git::GitRepo;
 use crate::lock;
+use crate::ui;
 use crate::{fs_util, path};
 
 /// Tracks stashed files for rollback capability
@@ -51,10 +52,7 @@ impl PreCommitTransaction {
 
 pub fn handle(git: &GitRepo) -> Result<()> {
     // 0. Acquire lock
-    lock::acquire_lock(&git.shadow_dir).map_err(|e| {
-        // Convert StaleLock to anyhow with context
-        anyhow::anyhow!("{}", e)
-    })?;
+    lock::acquire_lock(&git.shadow_dir)?;
 
     let config = ShadowConfig::load(&git.shadow_dir)?;
 
@@ -151,11 +149,7 @@ fn run_soft_checks(git: &GitRepo, config: &ShadowConfig) {
                     if content_changed {
                         eprintln!(
                             "{}",
-                            format!(
-                                "warning: baseline for {} is outdated. Run `git-shadow rebase {}`",
-                                file_path, file_path
-                            )
-                            .yellow()
+                            ui::baseline_outdated_warning(ui::detect_locale(), file_path).yellow()
                         );
                     }
                 }
@@ -216,7 +210,6 @@ fn process_overlay(git: &GitRepo, file_path: &str, tx: &mut PreCommitTransaction
 
     // c. Stage the baseline content
     git.add(file_path)
-        .map_err(|e| anyhow::anyhow!("{}", e))
         .with_context(|| format!("failed to stage {}", file_path))?;
 
     Ok(())

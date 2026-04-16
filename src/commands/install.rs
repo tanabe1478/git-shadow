@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 
 use crate::config::{FileType, ShadowConfig};
 use crate::git::GitRepo;
+use crate::ui;
 use crate::{fs_util, path};
 
 const HOOK_NAMES: &[&str] = &["pre-commit", "post-commit", "post-merge"];
@@ -30,6 +31,7 @@ fi
 }
 
 pub fn run() -> Result<()> {
+    let locale = ui::detect_locale();
     let git = GitRepo::discover(&std::env::current_dir()?)?;
 
     // Create shadow directory structure
@@ -71,7 +73,7 @@ pub fn run() -> Result<()> {
         std::fs::set_permissions(&hook_path, perms)?;
     }
 
-    println!("git-shadow hooks installed successfully");
+    println!("{}", ui::install_success(locale));
     Ok(())
 }
 
@@ -142,7 +144,10 @@ pub fn inherit_from_main_worktree(git: &GitRepo) -> Result<()> {
 
     if inherited_count > 0 {
         local_config.save(&git.shadow_dir)?;
-        println!("inherited {} file(s) from main worktree", inherited_count);
+        println!(
+            "{}",
+            ui::inherited_from_main_worktree(ui::detect_locale(), inherited_count)
+        );
     }
 
     Ok(())

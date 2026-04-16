@@ -3,8 +3,10 @@ use anyhow::Result;
 use crate::git::GitRepo;
 use crate::lock;
 use crate::path;
+use crate::ui;
 
 pub fn run(file: Option<&str>) -> Result<()> {
+    let locale = ui::detect_locale();
     let git = GitRepo::discover(&std::env::current_dir()?)?;
     let stash_dir = git.shadow_dir.join("stash");
     let mut restored = Vec::new();
@@ -52,16 +54,16 @@ pub fn run(file: Option<&str>) -> Result<()> {
 
     // Print summary
     if restored.is_empty() && !lock_removed {
-        println!("nothing to restore");
+        println!("{}", ui::restore_nothing(locale));
     } else {
         if !restored.is_empty() {
-            println!("restored files:");
+            println!("{}", ui::restore_heading(locale));
             for f in &restored {
                 println!("  {}", f);
             }
         }
         if lock_removed {
-            println!("lockfile removed");
+            println!("{}", ui::lockfile_removed(locale));
         }
     }
 

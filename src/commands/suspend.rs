@@ -7,8 +7,10 @@ use crate::fs_util;
 use crate::git::GitRepo;
 use crate::lock::{self, LockStatus};
 use crate::path;
+use crate::ui;
 
 pub fn run() -> Result<()> {
+    let locale = ui::detect_locale();
     let git = GitRepo::discover(&std::env::current_dir()?)?;
     let mut config = ShadowConfig::load(&git.shadow_dir)?;
 
@@ -34,7 +36,7 @@ pub fn run() -> Result<()> {
     }
 
     if config.files.is_empty() {
-        println!("no managed files to suspend");
+        println!("{}", ui::suspend_no_managed_files(locale));
         return Ok(());
     }
 
@@ -62,11 +64,8 @@ pub fn run() -> Result<()> {
     config.suspended = true;
     config.save(&git.shadow_dir)?;
 
-    println!(
-        "{}",
-        format!("shadow changes suspended for {} file(s)", count).green()
-    );
-    println!("working tree is now clean — you can switch branches");
+    println!("{}", ui::suspend_success(locale, count).green());
+    println!("{}", ui::suspend_worktree_clean(locale));
 
     Ok(())
 }
