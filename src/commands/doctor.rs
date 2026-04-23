@@ -7,7 +7,7 @@ use crate::lock::{self, LockStatus};
 use crate::path;
 use crate::ui;
 
-const HOOK_NAMES: &[&str] = &["pre-commit", "post-commit", "post-merge"];
+const HOOK_NAMES: &[&str] = &["pre-commit", "post-commit", "post-merge", "post-rewrite"];
 const COMPETING_HOOKS: &[&str] = &[".husky", ".pre-commit-config.yaml", "lefthook.yml"];
 
 pub fn run() -> Result<()> {

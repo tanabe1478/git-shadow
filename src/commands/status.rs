@@ -7,12 +7,24 @@ use crate::lock::{self, LockStatus};
 use crate::path;
 use crate::ui;
 
-pub fn run() -> Result<()> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OverlayGitState {
+    Clean,
+    Modified,
+    Staged,
+    PartiallyStaged,
+}
+
+pub fn run(show_git_status: bool) -> Result<()> {
     let locale = ui::detect_locale();
     let git = GitRepo::discover(&std::env::current_dir()?)?;
     let config = ShadowConfig::load(&git.shadow_dir)?;
 
-    // Check for stash remnants
+    if show_git_status {
+        print!("{}", git.status_short()?);
+        println!();
+    }
+
     let stash_dir = git.shadow_dir.join("stash");
     if stash_dir.exists() {
         let stash_files: Vec<_> = std::fs::read_dir(&stash_dir)?
@@ -26,7 +38,6 @@ pub fn run() -> Result<()> {
         }
     }
 
-    // Check for stale lock
     if let LockStatus::Stale(info) = lock::check_lock(&git.shadow_dir)? {
         println!(
             "{}",
@@ -53,6 +64,7 @@ pub fn run() -> Result<()> {
         match entry.file_type {
             FileType::Overlay => {
                 println!("  {} ({})", file_path, ui::label_overlay(locale));
+                println!("{}", ui::status_overlay_local_only(locale));
                 if let Some(ref commit) = entry.baseline_commit {
                     println!(
                         "{}",
@@ -60,7 +72,6 @@ pub fn run() -> Result<()> {
                     );
                 }
 
-                // Show diff stats
                 let encoded = path::encode_path(file_path);
                 let baseline_path = git.shadow_dir.join("baselines").join(&encoded);
                 let worktree_path = git.root.join(file_path);
@@ -76,11 +87,21 @@ pub fn run() -> Result<()> {
                     let (added, removed) = diff_stats(&baseline, &current);
                     println!("{}", ui::status_shadow_changes(locale, added, removed));
 
-                    // Check baseline drift (hash mismatch + content comparison)
+                    let git_state = overlay_git_state(git.staging_status(file_path)?);
+                    println!(
+                        "{}",
+                        ui::status_overlay_git_state(locale, git_state_label(git_state))
+                    );
+                    if matches!(
+                        git_state,
+                        OverlayGitState::Staged | OverlayGitState::PartiallyStaged
+                    ) {
+                        println!("{}", ui::status_overlay_staged_warning(locale).yellow());
+                    }
+
                     if let Some(ref commit) = entry.baseline_commit {
                         if let Ok(head) = git.head_commit() {
                             if *commit != head {
-                                // Hash differs — check if file content actually changed
                                 let content_changed = git
                                     .show_file("HEAD", file_path)
                                     .ok()
@@ -119,6 +140,9 @@ pub fn run() -> Result<()> {
                     ui::label_phantom(locale)
                 };
                 println!("  {} ({})", file_path, label);
+                if entry.is_directory {
+                    println!("{}", ui::status_phantom_dir_explainer(locale));
+                }
                 match entry.exclude_mode {
                     crate::config::ExcludeMode::GitInfoExclude => {
                         println!("{}", ui::status_exclude_git_info(locale));
@@ -151,7 +175,29 @@ pub fn run() -> Result<()> {
         }
     }
 
+    if show_git_status {
+        println!("{}", ui::status_git_wrapper_hint(locale));
+    }
+
     Ok(())
+}
+
+fn overlay_git_state(status: (bool, bool)) -> OverlayGitState {
+    match status {
+        (true, true) => OverlayGitState::PartiallyStaged,
+        (true, false) => OverlayGitState::Staged,
+        (false, true) => OverlayGitState::Modified,
+        (false, false) => OverlayGitState::Clean,
+    }
+}
+
+fn git_state_label(state: OverlayGitState) -> &'static str {
+    match state {
+        OverlayGitState::Clean => "clean",
+        OverlayGitState::Modified => "modified",
+        OverlayGitState::Staged => "staged",
+        OverlayGitState::PartiallyStaged => "partially staged",
+    }
 }
 
 fn diff_stats(old: &str, new: &str) -> (usize, usize) {
@@ -183,6 +229,29 @@ fn format_size(bytes: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_overlay_git_state_clean() {
+        assert_eq!(overlay_git_state((false, false)), OverlayGitState::Clean);
+    }
+
+    #[test]
+    fn test_overlay_git_state_modified() {
+        assert_eq!(overlay_git_state((false, true)), OverlayGitState::Modified);
+    }
+
+    #[test]
+    fn test_overlay_git_state_staged() {
+        assert_eq!(overlay_git_state((true, false)), OverlayGitState::Staged);
+    }
+
+    #[test]
+    fn test_overlay_git_state_partially_staged() {
+        assert_eq!(
+            overlay_git_state((true, true)),
+            OverlayGitState::PartiallyStaged
+        );
+    }
 
     #[test]
     fn test_diff_stats_no_change() {

@@ -54,6 +54,13 @@ pub fn registered_phantom_directory(locale: UiLocale, path: &str) -> String {
     }
 }
 
+pub fn add_failed(locale: UiLocale, path: &str, message: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!("{path} の登録に失敗しました: {message}"),
+        UiLocale::En => format!("failed to register {path}: {message}"),
+    }
+}
+
 pub fn no_managed_files(locale: UiLocale) -> &'static str {
     choose(locale, "管理対象ファイルはありません", "no managed files")
 }
@@ -298,6 +305,66 @@ pub fn baseline_outdated_warning(locale: UiLocale, path: &str) -> String {
     }
 }
 
+pub fn stale_lock_recovered(locale: UiLocale, pid: u32) -> String {
+    match locale {
+        UiLocale::Ja => {
+            format!("warning: stale lock (PID {pid}) を安全に回復しました。commit を続行します")
+        }
+        UiLocale::En => {
+            format!("warning: recovered stale lock from PID {pid} safely; continuing commit")
+        }
+    }
+}
+
+pub fn pre_commit_overlay_staged_warning(locale: UiLocale, path: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!(
+            "warning: `{path}` の local-only changes は現在 stage されていますが、commit 時に取り除かれます"
+        ),
+        UiLocale::En => format!(
+            "warning: local-only changes in `{path}` are staged right now, but will be stripped before commit"
+        ),
+    }
+}
+
+pub fn auto_rebase_commit_ref_updated(locale: UiLocale, path: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!("{path}: baseline の commit ref を自動更新しました"),
+        UiLocale::En => format!("{path}: auto-updated baseline commit reference"),
+    }
+}
+
+pub fn auto_rebase_updated(locale: UiLocale, path: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!("{path}: baseline を自動更新して shadow changes を再適用しました"),
+        UiLocale::En => {
+            format!("{path}: auto-updated baseline and re-applied shadow changes")
+        }
+    }
+}
+
+pub fn auto_rebase_conflict_warning(locale: UiLocale, path: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!(
+            "warning: {path} は自動 rebase で conflict しそうなので作業ツリーは変更しません。`git-shadow rebase {path}` を実行してください"
+        ),
+        UiLocale::En => format!(
+            "warning: auto-rebase for {path} would conflict, so the working tree was left untouched. Run `git-shadow rebase {path}`"
+        ),
+    }
+}
+
+pub fn auto_rebase_failed(locale: UiLocale, path: &str, trigger: &str, error: &str) -> String {
+    match locale {
+        UiLocale::Ja => {
+            format!("warning: {trigger} で {path} の自動 rebase に失敗しました: {error}")
+        }
+        UiLocale::En => {
+            format!("warning: {trigger} auto-rebase failed for {path}: {error}")
+        }
+    }
+}
+
 pub fn post_commit_restore_failed(locale: UiLocale, path: &str, error: &str) -> String {
     match locale {
         UiLocale::Ja => format!("warning: {path} の復元に失敗しました: {error}"),
@@ -487,6 +554,14 @@ pub fn status_heading_managed_files(locale: UiLocale) -> &'static str {
     choose(locale, "managed files:", "managed files:")
 }
 
+pub fn status_overlay_local_only(locale: UiLocale) -> &'static str {
+    choose(
+        locale,
+        "    local-only: このファイルの変更は working tree には残りますが commit には入りません",
+        "    local-only: changes in this file stay in your working tree but are not committed",
+    )
+}
+
 pub fn label_overlay(locale: UiLocale) -> &'static str {
     choose(locale, "overlay", "overlay")
 }
@@ -504,6 +579,21 @@ pub fn status_baseline(locale: UiLocale, commit: &str) -> String {
         UiLocale::Ja => format!("    baseline: {commit}"),
         UiLocale::En => format!("    baseline: {commit}"),
     }
+}
+
+pub fn status_overlay_git_state(locale: UiLocale, state: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!("    git state: {state}"),
+        UiLocale::En => format!("    git state: {state}"),
+    }
+}
+
+pub fn status_overlay_staged_warning(locale: UiLocale) -> &'static str {
+    choose(
+        locale,
+        "    warning: stage されている local-only changes は commit 前に取り除かれます",
+        "    warning: staged local-only changes will be stripped before commit",
+    )
 }
 
 pub fn status_warning_file_missing_worktree(locale: UiLocale) -> &'static str {
@@ -559,6 +649,14 @@ pub fn status_exclude_none(locale: UiLocale) -> &'static str {
     )
 }
 
+pub fn status_phantom_dir_explainer(locale: UiLocale) -> &'static str {
+    choose(
+        locale,
+        "    local-only directory: Git には含まれず、git-shadow が存在だけを保護します",
+        "    local-only directory: not committed to Git; git-shadow only protects its presence",
+    )
+}
+
 pub fn status_contents(locale: UiLocale, count: usize) -> String {
     match locale {
         UiLocale::Ja => format!("    contents: {count} entries"),
@@ -589,6 +687,14 @@ pub fn status_file_size(locale: UiLocale, size: &str) -> String {
     }
 }
 
+pub fn status_git_wrapper_hint(locale: UiLocale) -> &'static str {
+    choose(
+        locale,
+        "tip: 普段使いには `git shadow status --git` を shell alias にすると扱いやすいです",
+        "tip: for daily use, consider a shell alias for `git shadow status --git`",
+    )
+}
+
 fn choose(locale: UiLocale, ja: &'static str, en: &'static str) -> &'static str {
     match locale {
         UiLocale::Ja => ja,
@@ -611,9 +717,15 @@ fn format_shadow_error(err: &ShadowError, locale: UiLocale) -> String {
 fn format_shadow_error_ja(err: &ShadowError) -> String {
     match err {
         ShadowError::NotAGitRepo => "エラー: Git リポジトリではありません".to_string(),
+        ShadowError::PathDoesNotExist(path) => {
+            format!("エラー: `{path}` は存在しません")
+        }
         ShadowError::FileNotTracked(path) => {
             format!("エラー: `{path}` は Git に追跡されていません")
         }
+        ShadowError::TrackedFileNeedsOverlay(path) => format!(
+            "エラー: `{path}` は既に Git に追跡されています。`--phantom` を外して overlay として登録してください"
+        ),
         ShadowError::AlreadyManaged(path) => {
             format!("エラー: `{path}` は既に git-shadow の管理対象です")
         }
@@ -682,12 +794,22 @@ fn format_shadow_error_ja(err: &ShadowError) -> String {
              2. `git status` を確認する\n\
              3. もう一度 `git commit` する"
         ),
+        ShadowError::AutoRestoreConflict(file) => format!(
+            "コミットを止めました: stale lock の自動回復で `{file}` を上書きする可能性があります。\n\
+             対処:\n\
+             1. `{file}` の作業内容を確認する\n\
+             2. 必要なら退避してから `git-shadow restore` を実行する\n\
+             3. その後で `git commit` をやり直す"
+        ),
         ShadowError::NotInitialized => "\
 エラー: git-shadow がまだ初期化されていません。\n\
 対処:\n\
 1. リポジトリで `git-shadow install` を実行する\n\
 2. その後に `git-shadow add ...` や `git commit` をやり直す"
             .to_string(),
+        ShadowError::AddSomeFailed(count) => {
+            format!("エラー: {count} 件のパス登録に失敗しました。上のエラーを確認してください")
+        }
         ShadowError::AlreadySuspended => {
             "エラー: shadow changes は既に suspend されています".to_string()
         }
@@ -711,9 +833,15 @@ fn format_shadow_error_ja(err: &ShadowError) -> String {
 fn format_shadow_error_en(err: &ShadowError) -> String {
     match err {
         ShadowError::NotAGitRepo => "Error: not a Git repository".to_string(),
+        ShadowError::PathDoesNotExist(path) => {
+            format!("Error: `{path}` does not exist")
+        }
         ShadowError::FileNotTracked(path) => {
             format!("Error: `{path}` is not tracked by Git")
         }
+        ShadowError::TrackedFileNeedsOverlay(path) => format!(
+            "Error: `{path}` is already tracked by Git. Remove `--phantom` to register it as overlay"
+        ),
         ShadowError::AlreadyManaged(path) => {
             format!("Error: `{path}` is already managed by git-shadow")
         }
@@ -781,12 +909,22 @@ What to do:\n\
              2. Check `git status`\n\
              3. Run `git commit` again"
         ),
+        ShadowError::AutoRestoreConflict(file) => format!(
+            "Commit blocked: automatic stale-lock recovery would overwrite newer working tree content in `{file}`.\n\
+             What to do:\n\
+             1. Review the current contents of `{file}`\n\
+             2. Save anything you need, then run `git-shadow restore`\n\
+             3. Run `git commit` again"
+        ),
         ShadowError::NotInitialized => "\
 Error: git-shadow is not initialized yet.\n\
 What to do:\n\
 1. Run `git-shadow install` in this repository\n\
 2. Retry `git-shadow add ...` or `git commit`"
             .to_string(),
+        ShadowError::AddSomeFailed(count) => {
+            format!("Error: failed to register {count} path(s); see the errors above")
+        }
         ShadowError::AlreadySuspended => {
             "Error: shadow changes are already suspended".to_string()
         }

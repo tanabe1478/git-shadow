@@ -51,7 +51,7 @@ impl PreCommitTransaction {
 }
 
 pub fn handle(git: &GitRepo) -> Result<()> {
-    // 0. Acquire lock
+    maybe_recover_stale_state(git)?;
     lock::acquire_lock(&git.shadow_dir)?;
 
     let config = ShadowConfig::load(&git.shadow_dir)?;
@@ -130,6 +130,16 @@ fn run_soft_checks(git: &GitRepo, config: &ShadowConfig) {
 
     for (file_path, entry) in &config.files {
         if entry.file_type == FileType::Overlay {
+            if let Ok((index_changed, worktree_changed)) = git.staging_status(file_path) {
+                if index_changed && !worktree_changed {
+                    eprintln!(
+                        "{}",
+                        ui::pre_commit_overlay_staged_warning(ui::detect_locale(), file_path)
+                            .yellow()
+                    );
+                }
+            }
+
             if let (Some(ref baseline_commit), Some(ref current_head)) =
                 (&entry.baseline_commit, &head)
             {
@@ -156,6 +166,96 @@ fn run_soft_checks(git: &GitRepo, config: &ShadowConfig) {
             }
         }
     }
+}
+
+fn maybe_recover_stale_state(git: &GitRepo) -> Result<()> {
+    let stale_pid = match lock::check_lock(&git.shadow_dir)? {
+        lock::LockStatus::Stale(info) => Some(info.pid),
+        _ => None,
+    };
+
+    let Some(pid) = stale_pid else {
+        return Ok(());
+    };
+
+    let stash_entries = list_stash_entries(git)?;
+    if stash_entries.is_empty() {
+        lock::release_lock(&git.shadow_dir)?;
+        eprintln!(
+            "{}",
+            ui::stale_lock_recovered(ui::detect_locale(), pid).yellow()
+        );
+        return Ok(());
+    }
+
+    let config = ShadowConfig::load(&git.shadow_dir)?;
+    for (normalized, stash_path) in &stash_entries {
+        let entry = config
+            .get(normalized)
+            .ok_or_else(|| ShadowError::AutoRestoreConflict(normalized.clone()))?;
+        let stash_content = std::fs::read(stash_path)?;
+        let worktree_path = git.root.join(normalized);
+
+        match entry.file_type {
+            FileType::Overlay => {
+                let baseline_path = git
+                    .shadow_dir
+                    .join("baselines")
+                    .join(path::encode_path(normalized));
+                let baseline = std::fs::read(&baseline_path)
+                    .map_err(|_| ShadowError::BaselineMissing(normalized.clone()))?;
+                let current = std::fs::read(&worktree_path)
+                    .map_err(|_| ShadowError::FileMissing(normalized.clone()))?;
+                if current != baseline && current != stash_content {
+                    return Err(ShadowError::AutoRestoreConflict(normalized.clone()).into());
+                }
+            }
+            FileType::Phantom => {
+                if worktree_path.exists() {
+                    let current = std::fs::read(&worktree_path)?;
+                    if current != stash_content {
+                        return Err(ShadowError::AutoRestoreConflict(normalized.clone()).into());
+                    }
+                }
+            }
+        }
+    }
+
+    for (normalized, stash_path) in stash_entries {
+        let worktree_path = git.root.join(&normalized);
+        if let Some(parent) = worktree_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let content = std::fs::read(&stash_path)?;
+        std::fs::write(&worktree_path, &content)?;
+        std::fs::remove_file(&stash_path)?;
+    }
+
+    lock::release_lock(&git.shadow_dir)?;
+    eprintln!(
+        "{}",
+        ui::stale_lock_recovered(ui::detect_locale(), pid).yellow()
+    );
+    Ok(())
+}
+
+fn list_stash_entries(git: &GitRepo) -> Result<Vec<(String, std::path::PathBuf)>> {
+    let stash_dir = git.shadow_dir.join("stash");
+    if !stash_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut entries = Vec::new();
+    for entry in std::fs::read_dir(&stash_dir)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+        let encoded = entry.file_name().to_string_lossy().to_string();
+        entries.push((path::decode_path(&encoded), entry.path()));
+    }
+
+    Ok(entries)
 }
 
 fn detect_partial_staging(git: &GitRepo, config: &ShadowConfig) -> Result<()> {
@@ -490,5 +590,73 @@ mod tests {
         // Lock should be released
         let status = lock::check_lock(&git.shadow_dir).unwrap();
         assert!(matches!(status, LockStatus::Free));
+    }
+
+    #[test]
+    fn test_stale_lock_without_stash_is_removed_automatically() {
+        let (_dir, git) = make_test_repo();
+        let config = ShadowConfig::new();
+        config.save(&git.shadow_dir).unwrap();
+
+        std::fs::write(
+            git.shadow_dir.join("lock"),
+            "pid=999999\ntimestamp=2026-01-01T00:00:00+00:00",
+        )
+        .unwrap();
+
+        handle(&git).unwrap();
+
+        let status = lock::check_lock(&git.shadow_dir).unwrap();
+        assert!(matches!(status, LockStatus::Free));
+    }
+
+    #[test]
+    fn test_stale_lock_with_safe_overlay_stash_is_restored_automatically() {
+        let (_dir, git) = make_test_repo();
+        let _config = setup_overlay(&git);
+
+        let baseline = std::fs::read_to_string(git.root.join("CLAUDE.md")).unwrap();
+        fs_util::atomic_write(
+            &git.shadow_dir.join("stash").join("CLAUDE.md"),
+            b"# Team\n# My additions\n",
+        )
+        .unwrap();
+        std::fs::write(git.root.join("CLAUDE.md"), baseline).unwrap();
+        std::fs::write(
+            git.shadow_dir.join("lock"),
+            "pid=999999\ntimestamp=2026-01-01T00:00:00+00:00",
+        )
+        .unwrap();
+
+        handle(&git).unwrap();
+
+        let stash =
+            std::fs::read_to_string(git.shadow_dir.join("stash").join("CLAUDE.md")).unwrap();
+        assert_eq!(stash, "# Team\n# My additions\n");
+        let wt = std::fs::read_to_string(git.root.join("CLAUDE.md")).unwrap();
+        assert_eq!(wt, "# Team\n");
+
+        lock::release_lock(&git.shadow_dir).unwrap();
+    }
+
+    #[test]
+    fn test_stale_lock_conflict_blocks_automatic_restore() {
+        let (_dir, git) = make_test_repo();
+        let _config = setup_overlay(&git);
+
+        fs_util::atomic_write(
+            &git.shadow_dir.join("stash").join("CLAUDE.md"),
+            b"# Team\n# My additions\n",
+        )
+        .unwrap();
+        std::fs::write(git.root.join("CLAUDE.md"), "# Team\n# Newer edit\n").unwrap();
+        std::fs::write(
+            git.shadow_dir.join("lock"),
+            "pid=999999\ntimestamp=2026-01-01T00:00:00+00:00",
+        )
+        .unwrap();
+
+        let err = handle(&git).unwrap_err();
+        assert!(err.to_string().contains("overwrite"));
     }
 }

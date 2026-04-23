@@ -10,6 +10,7 @@ pub fn run(hook_name: &str) -> Result<()> {
         "pre-commit" => hooks::pre_commit::handle(&git),
         "post-commit" => hooks::post_commit::handle(&git),
         "post-merge" => hooks::post_merge::handle(&git),
+        "post-rewrite" => hooks::post_rewrite::handle(&git),
         _ => bail!("unknown hook name: {}", hook_name),
     }
 }

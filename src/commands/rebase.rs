@@ -9,6 +9,19 @@ use crate::merge;
 use crate::path;
 use crate::ui;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RebaseMode {
+    Manual,
+    Auto,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RebaseOutcome {
+    Updated,
+    CommitRefUpdated,
+    ConflictDeferred,
+}
+
 pub fn run(file: Option<&str>) -> Result<()> {
     let locale = ui::detect_locale();
     let cwd = std::env::current_dir()?;
@@ -66,6 +79,16 @@ pub(crate) fn rebase_file(
     file_path: &str,
     new_head: &str,
 ) -> Result<()> {
+    rebase_file_with_mode(git, config, file_path, new_head, RebaseMode::Manual).map(|_| ())
+}
+
+pub(crate) fn rebase_file_with_mode(
+    git: &GitRepo,
+    config: &mut ShadowConfig,
+    file_path: &str,
+    new_head: &str,
+    mode: RebaseMode,
+) -> Result<RebaseOutcome> {
     let encoded = path::encode_path(file_path);
     let baseline_path = git.shadow_dir.join("baselines").join(&encoded);
     let worktree_path = git.root.join(file_path);
@@ -93,11 +116,17 @@ pub(crate) fn rebase_file(
         if let Some(entry) = config.files.get_mut(file_path) {
             entry.baseline_commit = Some(new_head.to_string());
         }
-        println!(
-            "{}",
-            ui::rebase_commit_ref_updated(ui::detect_locale(), file_path)
-        );
-        return Ok(());
+        match mode {
+            RebaseMode::Manual => println!(
+                "{}",
+                ui::rebase_commit_ref_updated(ui::detect_locale(), file_path)
+            ),
+            RebaseMode::Auto => eprintln!(
+                "{}",
+                ui::auto_rebase_commit_ref_updated(ui::detect_locale(), file_path)
+            ),
+        }
+        return Ok(RebaseOutcome::CommitRefUpdated);
     }
 
     // 4. 3-way merge: old_baseline (base), current_content (ours), new_baseline (theirs)
@@ -107,6 +136,14 @@ pub(crate) fn rebase_file(
         &new_baseline,
         &git.shadow_dir,
     )?;
+
+    if mode == RebaseMode::Auto && merge_result.has_conflicts {
+        eprintln!(
+            "{}",
+            ui::auto_rebase_conflict_warning(ui::detect_locale(), file_path).yellow()
+        );
+        return Ok(RebaseOutcome::ConflictDeferred);
+    }
 
     // 5. Write merged content to working tree
     std::fs::write(&worktree_path, &merge_result.content)?;
@@ -125,12 +162,53 @@ pub(crate) fn rebase_file(
             ui::rebase_conflicts(ui::detect_locale(), file_path).yellow()
         );
     } else {
-        println!(
-            "{}",
-            ui::rebase_updated(ui::detect_locale(), file_path).green()
-        );
+        match mode {
+            RebaseMode::Manual => println!(
+                "{}",
+                ui::rebase_updated(ui::detect_locale(), file_path).green()
+            ),
+            RebaseMode::Auto => eprintln!(
+                "{}",
+                ui::auto_rebase_updated(ui::detect_locale(), file_path).yellow()
+            ),
+        }
     }
 
+    Ok(RebaseOutcome::Updated)
+}
+
+pub fn auto_rebase_all(git: &GitRepo, trigger: &str) -> Result<()> {
+    let mut config = ShadowConfig::load(&git.shadow_dir)?;
+    if config.suspended || config.files.is_empty() {
+        return Ok(());
+    }
+
+    let head = git.head_commit()?;
+    let file_paths: Vec<String> = config.files.keys().cloned().collect();
+
+    for file_path in file_paths {
+        let Some(entry) = config.files.get(&file_path) else {
+            continue;
+        };
+        if entry.file_type != FileType::Overlay {
+            continue;
+        }
+
+        if entry.baseline_commit.as_deref() == Some(head.as_str()) {
+            continue;
+        }
+
+        match rebase_file_with_mode(git, &mut config, &file_path, &head, RebaseMode::Auto) {
+            Ok(_) => {}
+            Err(err) => eprintln!(
+                "{}",
+                ui::auto_rebase_failed(ui::detect_locale(), &file_path, trigger, &err.to_string())
+                    .yellow()
+            ),
+        }
+    }
+
+    config.save(&git.shadow_dir)?;
     Ok(())
 }
 

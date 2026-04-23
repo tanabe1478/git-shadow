@@ -11,6 +11,12 @@ pub enum ShadowError {
     #[error("file '{0}' is not tracked by Git")]
     FileNotTracked(String),
 
+    #[error("path '{0}' does not exist")]
+    PathDoesNotExist(String),
+
+    #[error("file '{0}' is already tracked by Git. Remove --phantom to register it as overlay")]
+    TrackedFileNeedsOverlay(String),
+
     #[error("file '{0}' is already managed by git-shadow")]
     AlreadyManaged(String),
 
@@ -29,6 +35,9 @@ pub enum ShadowError {
     #[error("stale lock detected (PID {0} no longer exists). Run `git-shadow restore`")]
     StaleLock(u32),
 
+    #[error("automatic stale-lock recovery would overwrite newer working tree content in '{0}'. Run `git-shadow restore` manually")]
+    AutoRestoreConflict(String),
+
     #[error("stash has remaining files. Run `git-shadow restore`")]
     StashRemaining,
 
@@ -43,6 +52,9 @@ pub enum ShadowError {
 
     #[error("failed to unstage phantom file '{0}'. Run `git reset -- {0}` manually")]
     UnstageFailure(String),
+
+    #[error("failed to register {0} path(s); see errors above")]
+    AddSomeFailed(usize),
 
     #[error("git command failed: {command}\n{stderr}")]
     GitCommand { command: String, stderr: String },

@@ -405,7 +405,7 @@ fn install_hooks_for_test(git: &GitRepo) {
     let hooks_dir = git.hooks_dir();
     std::fs::create_dir_all(&hooks_dir).unwrap();
 
-    for name in &["pre-commit", "post-commit", "post-merge"] {
+    for name in &["pre-commit", "post-commit", "post-merge", "post-rewrite"] {
         let content = format!("#!/bin/sh\nexec git-shadow hook {}\n", name);
         std::fs::write(hooks_dir.join(name), content).unwrap();
 

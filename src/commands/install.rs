@@ -7,7 +7,7 @@ use crate::git::GitRepo;
 use crate::ui;
 use crate::{fs_util, path};
 
-const HOOK_NAMES: &[&str] = &["pre-commit", "post-commit", "post-merge"];
+const HOOK_NAMES: &[&str] = &["pre-commit", "post-commit", "post-merge", "post-rewrite"];
 
 fn generate_hook_script(hook_name: &str) -> String {
     format!(

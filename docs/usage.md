@@ -58,12 +58,14 @@ Use phantoms for files that should exist only on your machine.
 ```bash
 # Create and register a new local-only file
 echo "#!/bin/bash" > scripts/local-setup.sh
-git-shadow add --phantom scripts/local-setup.sh
+git-shadow add scripts/local-setup.sh
 ```
 
 By default, phantom files are added to `.git/info/exclude` to hide them from `git status`.
 
 **Options:**
+- `--overlay` — Force overlay registration for all given paths
+- `--phantom` — Force phantom registration for all given paths
 - `--no-exclude` — Skip the `.git/info/exclude` entry. The file will appear in `git status` as untracked but will still be excluded from commits by the pre-commit hook.
 
 #### Phantom Directories
@@ -101,8 +103,18 @@ git-shadow status
 
 Shows all managed files with:
 - Overlay: baseline commit hash, diff line counts (+/- lines)
+- Overlay: current Git state (`clean`, `modified`, `staged`, or `partially staged`)
+- Overlay: a local-only warning when staged changes will be stripped at commit time
 - Phantom: exclude mode, file size
 - Warnings for stale locks, stash remnants, or baseline drift
+
+For an opt-in combined view with normal Git output:
+
+```bash
+git shadow status --git
+```
+
+This prints `git status --short --branch` first, then the shadow-managed summary. `git-shadow` does not replace `git status` by default.
 
 ### Diff
 
@@ -221,6 +233,8 @@ git-shadow restore docker-compose.yml
 - Restores stashed files to the working tree
 - Removes stale lockfiles
 - Cleans up the stash directory
+
+When a stale lock is found during `git commit`, git-shadow also tries safe auto-recovery first. If restoring would overwrite newer working-tree content, the commit is still blocked and manual `git-shadow restore` is required.
 
 ## Diagnostics
 
@@ -353,6 +367,14 @@ Using `--no-verify` skips the pre-commit hook, so shadow changes will be include
 ### Partial Staging
 
 git-shadow does not support partial staging (`git add -p`) of overlay files. If both staged and unstaged changes exist for an overlay file, the pre-commit hook will block the commit. Stage the entire file with `git add <file>` before committing.
+
+### `git add` Guardrails
+
+Git does not provide a general pre-`add` hook, so git-shadow cannot warn before every `git add`. Instead:
+
+- `git-shadow status` shows when overlay-managed files are local-only and currently staged
+- `git shadow status --git` gives an opt-in daily wrapper view with normal Git status first
+- the pre-commit hook warns when staged local-only overlay changes are about to be stripped
 
 ### Binary Files
 

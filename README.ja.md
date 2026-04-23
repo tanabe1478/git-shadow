@@ -48,13 +48,16 @@ cargo install --path .
 cd your-repo
 git-shadow install
 
-# overlay を追加（既存のトラッキング済みファイル）
+# 管理対象を追加（tracked は overlay、existing untracked は phantom を自動判定）
 git-shadow add docker-compose.yml
+git-shadow add scripts/local-setup.sh
 echo "  # 個人用デバッグポート" >> docker-compose.yml
 
-# phantom を追加（新規ローカル限定ファイル）
-echo "#!/bin/bash" > scripts/local-setup.sh
-git-shadow add --phantom scripts/local-setup.sh
+# 明示的に phantom / overlay を強制したい場合はフラグも使える
+git-shadow add --phantom another-local-file.sh
+
+# Git の状態と shadow の意味をまとめて確認
+git shadow status --git
 
 # 普通にコミット — shadow 変更は自動的に除外される
 git add -A && git commit -m "チームの変更"
@@ -68,11 +71,11 @@ git show HEAD:docker-compose.yml  # クリーンなチーム用の内容のみ
 
 | コマンド | 説明 |
 |---------|------|
-| `git-shadow install` | Git hooks のセットアップ (pre-commit, post-commit, post-merge) |
-| `git-shadow add <file>` | トラッキング済みファイルを overlay として登録 |
-| `git-shadow add --phantom <file>` | ローカル限定ファイルを phantom として登録 |
+| `git-shadow install` | Git hooks のセットアップ (pre-commit, post-commit, post-merge, post-rewrite) |
+| `git-shadow add <file>...` | tracked は overlay、既存の untracked path は phantom として自動登録 |
+| `git-shadow add --phantom <file>...` | ローカル限定ファイル/ディレクトリを phantom として強制登録 |
 | `git-shadow remove <file>` | shadow 管理から解除 |
-| `git-shadow status` | 管理対象ファイルの一覧と状態を表示 |
+| `git-shadow status [--git]` | 管理対象ファイルの一覧と状態を表示。`--git` で `git status --short --branch` も先に表示 |
 | `git-shadow diff [file]` | shadow 変更の差分を表示 |
 | `git-shadow rebase [file]` | ベースラインを更新し shadow 変更を再適用 (3-way merge) |
 | `git-shadow restore [file]` | 中断されたコミットやクラッシュからの復旧 |
@@ -96,6 +99,12 @@ git show HEAD:docker-compose.yml  # クリーンなチーム用の内容のみ
 - **ロックファイル**: PID ベースのロックで並行操作を防止
 - **ロールバック**: pre-commit の失敗時は自動的にロールバック
 - **リカバリ**: `git-shadow restore` であらゆる中断状態から復旧可能
+- **自動回復**: stale lock は安全に直せる場合だけ自動回復し、上書きリスクがある場合は手動復旧を要求
+
+## 日常運用のメモ
+
+- デフォルトでは `git status` 自体は置き換えません。opt-in の統合表示として `git shadow status --git` を使ってください。
+- Git には一般的な pre-`add` hook がないため、overlay への早期警告は `git-shadow status` と commit 時の警告で補います。
 
 ## ドキュメント
 
