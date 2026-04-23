@@ -48,13 +48,16 @@ cargo install --path .
 cd your-repo
 git-shadow install
 
-# Add an overlay (existing tracked file)
+# Add managed files (tracked => overlay, untracked => phantom)
 git-shadow add docker-compose.yml
+git-shadow add scripts/local-setup.sh
 echo "  # my debug port override" >> docker-compose.yml
 
-# Add a phantom (new local-only file)
-echo "#!/bin/bash" > scripts/local-setup.sh
-git-shadow add --phantom scripts/local-setup.sh
+# If you want to force phantom/overlay explicitly, the old flags still work
+git-shadow add --phantom another-local-file.sh
+
+# Inspect normal Git state plus shadow meaning
+git shadow status --git
 
 # Commit as usual — shadow changes are automatically excluded
 git add -A && git commit -m "team changes"
@@ -68,11 +71,11 @@ git show HEAD:docker-compose.yml  # clean, team-only content
 
 | Command | Description |
 |---------|-------------|
-| `git-shadow install` | Set up Git hooks (pre-commit, post-commit, post-merge) |
-| `git-shadow add <file>` | Register a tracked file as an overlay |
-| `git-shadow add --phantom <file>` | Register a local-only file as a phantom |
+| `git-shadow install` | Set up Git hooks (pre-commit, post-commit, post-merge, post-rewrite) |
+| `git-shadow add <file>...` | Register tracked files as overlays and existing untracked paths as phantoms automatically |
+| `git-shadow add --phantom <file>...` | Force local-only files/directories to be phantoms |
 | `git-shadow remove <file>` | Unregister a file from shadow management |
-| `git-shadow status` | Show managed files and their state |
+| `git-shadow status [--git]` | Show managed files and their state, optionally prefixed by `git status --short --branch` |
 | `git-shadow diff [file]` | Show shadow changes as a unified diff |
 | `git-shadow rebase [file]` | Update baseline after upstream changes (3-way merge) |
 | `git-shadow restore [file]` | Recover from interrupted commits or crashes |
@@ -96,6 +99,12 @@ All data is stored in `.git/shadow/` — inside `.git/`, so it's never committed
 - **Lockfile**: PID-based lock prevents concurrent operations
 - **Rollback**: Failed pre-commit operations are rolled back automatically
 - **Recovery**: `git-shadow restore` recovers from any interrupted state
+- **Auto-healing**: stale locks are recovered automatically when doing so is safe; ambiguous cases still stop and ask for manual restore
+
+## Daily Flow Notes
+
+- `git status` itself is not replaced by default. Use `git shadow status --git` if you want an opt-in combined view.
+- Git does not provide a general pre-`add` hook, so early warnings for overlay files happen in `git-shadow status` and at commit time, not during `git add`.
 
 ## Documentation
 

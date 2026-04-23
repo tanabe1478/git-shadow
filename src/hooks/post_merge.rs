@@ -1,42 +1,10 @@
 use anyhow::Result;
-use colored::Colorize;
 
-use crate::config::{FileType, ShadowConfig};
+use crate::commands::rebase;
 use crate::git::GitRepo;
-use crate::path;
-use crate::ui;
 
 pub fn handle(git: &GitRepo) -> Result<()> {
-    let config = ShadowConfig::load(&git.shadow_dir)?;
-    let head = git.head_commit()?;
-
-    for (file_path, entry) in &config.files {
-        if entry.file_type != FileType::Overlay {
-            continue;
-        }
-
-        if let Some(ref baseline_commit) = entry.baseline_commit {
-            if *baseline_commit == head {
-                continue;
-            }
-
-            // Check if file content actually changed
-            let encoded = path::encode_path(file_path);
-            let baseline_path = git.shadow_dir.join("baselines").join(&encoded);
-            if let Ok(baseline_content) = std::fs::read(&baseline_path) {
-                if let Ok(head_content) = git.show_file("HEAD", file_path) {
-                    if baseline_content != head_content {
-                        eprintln!(
-                            "{}",
-                            ui::baseline_outdated_warning(ui::detect_locale(), file_path).yellow()
-                        );
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(())
+    rebase::auto_rebase_all(git, "post-merge")
 }
 
 #[cfg(test)]
@@ -44,6 +12,7 @@ mod tests {
     use super::*;
     use crate::config::ShadowConfig;
     use crate::fs_util;
+    use crate::path;
 
     fn make_test_repo() -> (tempfile::TempDir, GitRepo) {
         let dir = tempfile::tempdir().unwrap();
@@ -82,59 +51,54 @@ mod tests {
     }
 
     #[test]
-    fn test_no_warning_when_baseline_matches() {
+    fn test_post_merge_auto_rebases_clean_changes() {
         let (_dir, git) = make_test_repo();
-        let commit = git.head_commit().unwrap();
-        let mut config = ShadowConfig::new();
-        config.add_overlay("CLAUDE.md".to_string(), commit).unwrap();
-
-        // Save baseline
-        let content = git.show_file("HEAD", "CLAUDE.md").unwrap();
-        fs_util::atomic_write(
-            &git.shadow_dir.join("baselines").join("CLAUDE.md"),
-            &content,
-        )
-        .unwrap();
-
-        config.save(&git.shadow_dir).unwrap();
-
-        // Should not error
-        handle(&git).unwrap();
-    }
-
-    #[test]
-    fn test_detects_baseline_drift() {
-        let (_dir, git) = make_test_repo();
-        let old_commit = git.head_commit().unwrap();
-        let mut config = ShadowConfig::new();
-        config
-            .add_overlay("CLAUDE.md".to_string(), old_commit)
-            .unwrap();
-
-        // Save old baseline
-        let content = git.show_file("HEAD", "CLAUDE.md").unwrap();
-        fs_util::atomic_write(
-            &git.shadow_dir.join("baselines").join("CLAUDE.md"),
-            &content,
-        )
-        .unwrap();
-
-        config.save(&git.shadow_dir).unwrap();
-
-        // Make a new commit that changes the file
-        std::fs::write(git.root.join("CLAUDE.md"), "# Updated Team\n").unwrap();
+        std::fs::write(git.root.join("CLAUDE.md"), "line1\nline2\nline3\n").unwrap();
         std::process::Command::new("git")
             .args(["add", "CLAUDE.md"])
             .current_dir(&git.root)
             .output()
             .unwrap();
         std::process::Command::new("git")
-            .args(["commit", "-m", "update"])
+            .args(["commit", "-m", "set base"])
             .current_dir(&git.root)
             .output()
             .unwrap();
 
-        // Should not error (warnings go to stderr)
+        let old_commit = git.head_commit().unwrap();
+        let mut config = ShadowConfig::new();
+        config
+            .add_overlay("CLAUDE.md".to_string(), old_commit)
+            .unwrap();
+        let encoded = path::encode_path("CLAUDE.md");
+        fs_util::atomic_write(
+            &git.shadow_dir.join("baselines").join(&encoded),
+            b"line1\nline2\nline3\n",
+        )
+        .unwrap();
+        config.save(&git.shadow_dir).unwrap();
+
+        std::fs::write(git.root.join("CLAUDE.md"), "line1\nline2 modified\nline3\n").unwrap();
+        std::fs::write(git.root.join("CLAUDE.md"), "line1\nline2\nline3\nline4\n").unwrap();
+        std::process::Command::new("git")
+            .args(["add", "CLAUDE.md"])
+            .current_dir(&git.root)
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["commit", "-m", "upstream"])
+            .current_dir(&git.root)
+            .output()
+            .unwrap();
+        std::fs::write(git.root.join("CLAUDE.md"), "line1\nline2 modified\nline3\n").unwrap();
+
         handle(&git).unwrap();
+
+        let baseline =
+            std::fs::read_to_string(git.shadow_dir.join("baselines").join(&encoded)).unwrap();
+        assert_eq!(baseline, "line1\nline2\nline3\nline4\n");
+        let wt = std::fs::read_to_string(git.root.join("CLAUDE.md")).unwrap();
+        assert!(wt.contains("line2 modified"));
+        assert!(wt.contains("line4"));
     }
 }

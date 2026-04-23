@@ -10,39 +10,107 @@ use crate::git::GitRepo;
 use crate::ui;
 use crate::{fs_util, path};
 
-pub fn run(file: &str, phantom: bool, no_exclude: bool, force: bool) -> Result<()> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AddMode {
+    Auto,
+    Overlay,
+    Phantom,
+}
+
+pub fn run(
+    files: &[String],
+    overlay: bool,
+    phantom: bool,
+    no_exclude: bool,
+    force: bool,
+) -> Result<()> {
     let cwd = std::env::current_dir()?;
     let git = GitRepo::discover(&cwd)?;
-    run_with_repo(&git, &cwd, file, phantom, no_exclude, force)
+
+    let mode = if overlay {
+        AddMode::Overlay
+    } else if phantom {
+        AddMode::Phantom
+    } else {
+        AddMode::Auto
+    };
+
+    run_with_repo(&git, &cwd, files, mode, no_exclude, force)
 }
 
 fn run_with_repo(
     git: &GitRepo,
     cwd: &Path,
-    file: &str,
-    phantom: bool,
+    files: &[String],
+    mode: AddMode,
     no_exclude: bool,
     force: bool,
 ) -> Result<()> {
     let locale = ui::detect_locale();
-    let normalized = path::normalize_path(file, cwd, &git.root)?;
     git.ensure_initialized()?;
 
-    // Warn if hooks not installed
     if !git.hooks_installed() {
         eprintln!("{}", ui::warning_hooks_not_installed(locale).yellow());
     }
 
     let mut config = ShadowConfig::load(&git.shadow_dir)?;
+    let mut failures = 0usize;
 
-    if phantom {
-        add_phantom(git, &mut config, &normalized, no_exclude)?;
-    } else {
-        add_overlay(git, &mut config, &normalized, force)?;
+    for file in files {
+        let normalized = path::normalize_path(file, cwd, &git.root)?;
+
+        let resolved_mode = match resolve_mode(git, &normalized, mode) {
+            Ok(resolved_mode) => resolved_mode,
+            Err(err) => {
+                failures += 1;
+                eprintln!(
+                    "{}",
+                    ui::add_failed(locale, &normalized, &ui::format_error(&err, locale)).red()
+                );
+                continue;
+            }
+        };
+
+        let result = match resolved_mode {
+            AddMode::Overlay => add_overlay(git, &mut config, &normalized, force),
+            AddMode::Phantom => add_phantom(git, &mut config, &normalized, no_exclude),
+            AddMode::Auto => unreachable!("auto mode should be resolved before registration"),
+        };
+
+        if let Err(err) = result {
+            failures += 1;
+            eprintln!(
+                "{}",
+                ui::add_failed(locale, &normalized, &ui::format_error(&err, locale)).red()
+            );
+        }
     }
 
     config.save(&git.shadow_dir)?;
+
+    if failures > 0 {
+        return Err(ShadowError::AddSomeFailed(failures).into());
+    }
+
     Ok(())
+}
+
+fn resolve_mode(git: &GitRepo, normalized: &str, mode: AddMode) -> Result<AddMode> {
+    match mode {
+        AddMode::Overlay => Ok(AddMode::Overlay),
+        AddMode::Phantom => Ok(AddMode::Phantom),
+        AddMode::Auto => {
+            if git.is_tracked(normalized)? {
+                return Ok(AddMode::Overlay);
+            }
+
+            if git.root.join(normalized).exists() {
+                return Ok(AddMode::Phantom);
+            }
+
+            Err(ShadowError::PathDoesNotExist(normalized.to_string()).into())
+        }
+    }
 }
 
 fn add_overlay(
@@ -52,31 +120,26 @@ fn add_overlay(
     force: bool,
 ) -> Result<()> {
     let locale = ui::detect_locale();
-    // Check file is tracked
+
     if !git.is_tracked(normalized)? {
         return Err(ShadowError::FileNotTracked(normalized.to_string()).into());
     }
 
     let file_path = git.root.join(normalized);
 
-    // Binary check
     if fs_util::is_binary(&file_path)? {
         return Err(ShadowError::BinaryFile(normalized.to_string()).into());
     }
 
-    // Size check
     fs_util::check_size(&file_path, force)?;
 
-    // Get HEAD content as baseline
     let commit = git.head_commit()?;
     let baseline_content = git.show_file("HEAD", normalized)?;
 
-    // Save baseline
     let encoded = path::encode_path(normalized);
     let baseline_path = git.shadow_dir.join("baselines").join(&encoded);
     fs_util::atomic_write(&baseline_path, &baseline_content).context("failed to save baseline")?;
 
-    // Add to config
     config.add_overlay(normalized.to_string(), commit)?;
 
     println!(
@@ -101,12 +164,8 @@ fn add_phantom(
     normalized: &str,
     no_exclude: bool,
 ) -> Result<()> {
-    // Phantom files should NOT be tracked
     if git.is_tracked(normalized)? {
-        return Err(anyhow::anyhow!(
-            "file '{}' is already tracked by Git. Remove --phantom to register as overlay",
-            normalized
-        ));
+        return Err(ShadowError::TrackedFileNeedsOverlay(normalized.to_string()).into());
     }
 
     let full_path = git.root.join(normalized);
@@ -115,7 +174,6 @@ fn add_phantom(
     let exclude_mode = if no_exclude {
         ExcludeMode::None
     } else {
-        // Add to .git/info/exclude (with trailing / for directories)
         let exclude_path = if is_dir {
             format!("{}/", normalized)
         } else {
@@ -147,6 +205,7 @@ fn add_phantom(
 #[cfg(test)]
 mod tests {
     use super::*;
+
     fn make_test_repo() -> (tempfile::TempDir, GitRepo) {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().to_path_buf();
@@ -166,7 +225,6 @@ mod tests {
             .output()
             .unwrap();
 
-        // Create and commit a file
         std::fs::write(root.join("CLAUDE.md"), "# Team CLAUDE\n").unwrap();
         std::process::Command::new("git")
             .args(["add", "CLAUDE.md"])
@@ -180,12 +238,32 @@ mod tests {
             .unwrap();
 
         let repo = GitRepo::discover(&root).unwrap();
-
-        // Initialize shadow directory
         std::fs::create_dir_all(repo.shadow_dir.join("baselines")).unwrap();
         std::fs::create_dir_all(repo.shadow_dir.join("stash")).unwrap();
 
         (dir, repo)
+    }
+
+    #[test]
+    fn test_resolve_mode_auto_overlay_for_tracked() {
+        let (_dir, git) = make_test_repo();
+        let mode = resolve_mode(&git, "CLAUDE.md", AddMode::Auto).unwrap();
+        assert_eq!(mode, AddMode::Overlay);
+    }
+
+    #[test]
+    fn test_resolve_mode_auto_phantom_for_existing_untracked() {
+        let (_dir, git) = make_test_repo();
+        std::fs::write(git.root.join("local.md"), "# Local\n").unwrap();
+        let mode = resolve_mode(&git, "local.md", AddMode::Auto).unwrap();
+        assert_eq!(mode, AddMode::Phantom);
+    }
+
+    #[test]
+    fn test_resolve_mode_auto_rejects_missing_path() {
+        let (_dir, git) = make_test_repo();
+        let err = resolve_mode(&git, "missing.md", AddMode::Auto).unwrap_err();
+        assert!(err.to_string().contains("does not exist"));
     }
 
     #[test]
@@ -223,7 +301,6 @@ mod tests {
     #[test]
     fn test_add_overlay_rejects_binary() {
         let (_dir, git) = make_test_repo();
-        // Create and commit a binary file
         let mut content = b"hello".to_vec();
         content.push(0x00);
         std::fs::write(git.root.join("bin.dat"), &content).unwrap();
@@ -255,7 +332,6 @@ mod tests {
     #[test]
     fn test_add_phantom_creates_config_entry() {
         let (_dir, git) = make_test_repo();
-        // Create a phantom file (not tracked)
         let phantom_dir = git.root.join("src").join("components");
         std::fs::create_dir_all(&phantom_dir).unwrap();
         std::fs::write(phantom_dir.join("CLAUDE.md"), "# Local\n").unwrap();
@@ -273,7 +349,6 @@ mod tests {
         let (_dir, git) = make_test_repo();
         std::fs::create_dir_all(git.root.join("src")).unwrap();
         std::fs::write(git.root.join("src/CLAUDE.md"), "# Local\n").unwrap();
-        // Ensure info dir exists
         std::fs::create_dir_all(git.common_dir.join("info")).unwrap();
 
         let mut config = ShadowConfig::new();
@@ -300,7 +375,6 @@ mod tests {
     #[test]
     fn test_add_phantom_directory_creates_config_entry() {
         let (_dir, git) = make_test_repo();
-        // Create an untracked directory
         std::fs::create_dir_all(git.root.join(".claude")).unwrap();
         std::fs::write(git.root.join(".claude/settings.json"), "{}").unwrap();
 
@@ -324,11 +398,7 @@ mod tests {
 
         let manager = ExcludeManager::new(&git.common_dir);
         let entries = manager.list_entries().unwrap();
-        assert!(
-            entries.contains(&".claude/".to_string()),
-            "exclude entry should have trailing slash for directory, got: {:?}",
-            entries
-        );
+        assert!(entries.contains(&".claude/".to_string()));
     }
 
     #[test]
@@ -370,7 +440,9 @@ mod tests {
         let (_dir, git) = make_test_repo();
         std::fs::remove_dir_all(&git.shadow_dir).unwrap();
 
-        let err = run_with_repo(&git, &git.root, "CLAUDE.md", false, false, false).unwrap_err();
+        let files = vec!["CLAUDE.md".to_string()];
+        let err =
+            run_with_repo(&git, &git.root, &files, AddMode::Overlay, false, false).unwrap_err();
         assert!(err.to_string().contains("Run `git-shadow install`"));
     }
 
@@ -380,7 +452,9 @@ mod tests {
         std::fs::remove_dir_all(&git.shadow_dir).unwrap();
         std::fs::write(git.root.join("local.md"), "# Local\n").unwrap();
 
-        let err = run_with_repo(&git, &git.root, "local.md", true, false, false).unwrap_err();
+        let files = vec!["local.md".to_string()];
+        let err =
+            run_with_repo(&git, &git.root, &files, AddMode::Phantom, false, false).unwrap_err();
         assert!(err.to_string().contains("Run `git-shadow install`"));
     }
 
@@ -394,8 +468,41 @@ mod tests {
         let cwd = git.root.join("src");
         std::fs::create_dir_all(&cwd).unwrap();
 
-        let err =
-            run_with_repo(&git, &cwd, "../../outside/local.md", true, false, false).unwrap_err();
+        let files = vec!["../../outside/local.md".to_string()];
+        let err = run_with_repo(&git, &cwd, &files, AddMode::Phantom, false, false).unwrap_err();
         assert!(err.to_string().contains("outside repository"));
+    }
+
+    #[test]
+    fn test_run_auto_detects_mixed_inputs() {
+        let (_dir, git) = make_test_repo();
+        std::fs::write(git.root.join("local.md"), "# Local\n").unwrap();
+
+        let files = vec!["CLAUDE.md".to_string(), "local.md".to_string()];
+        run_with_repo(&git, &git.root, &files, AddMode::Auto, false, false).unwrap();
+
+        let config = ShadowConfig::load(&git.shadow_dir).unwrap();
+        assert_eq!(
+            config.get("CLAUDE.md").unwrap().file_type,
+            crate::config::FileType::Overlay
+        );
+        assert_eq!(
+            config.get("local.md").unwrap().file_type,
+            crate::config::FileType::Phantom
+        );
+    }
+
+    #[test]
+    fn test_run_returns_error_when_any_input_fails() {
+        let (_dir, git) = make_test_repo();
+        std::fs::write(git.root.join("local.md"), "# Local\n").unwrap();
+
+        let files = vec!["local.md".to_string(), "missing.md".to_string()];
+        let err = run_with_repo(&git, &git.root, &files, AddMode::Auto, false, false).unwrap_err();
+        assert!(!err.to_string().is_empty());
+
+        let config = ShadowConfig::load(&git.shadow_dir).unwrap();
+        assert!(config.get("local.md").is_some());
+        assert!(config.get("missing.md").is_none());
     }
 }

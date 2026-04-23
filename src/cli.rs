@@ -19,8 +19,11 @@ pub enum Commands {
 
     /// Register a file for shadow management
     Add {
-        /// Target file path
-        file: String,
+        /// Target file paths
+        files: Vec<String>,
+        /// Register as overlay even if auto-detection would choose phantom
+        #[arg(long, conflicts_with = "phantom")]
+        overlay: bool,
         /// Register as a phantom (local-only file)
         #[arg(long)]
         phantom: bool,
@@ -42,7 +45,11 @@ pub enum Commands {
     },
 
     /// Show managed files and their status
-    Status,
+    Status {
+        /// Show `git status --short --branch` before the shadow summary
+        #[arg(long)]
+        git: bool,
+    },
 
     /// Show shadow changes as a diff
     Diff {
@@ -74,7 +81,7 @@ pub enum Commands {
     /// Internal subcommand called from hooks
     #[command(hide = true)]
     Hook {
-        /// Hook name (pre-commit, post-commit, post-merge)
+        /// Hook name (pre-commit, post-commit, post-merge, post-rewrite)
         hook_name: String,
     },
 }
@@ -113,16 +120,22 @@ fn localize_subcommands(command: clap::Command, locale: UiLocale) -> clap::Comma
             UiLocale::Ja => "ファイルを shadow 管理に登録する",
             UiLocale::En => "Register a file for shadow management",
         })
-        .mut_arg("file", |arg| {
+        .mut_arg("files", |arg| {
             arg.help(match locale {
-                UiLocale::Ja => "対象ファイルのパス",
-                UiLocale::En => "Target file path",
+                UiLocale::Ja => "対象ファイルのパス (複数指定可)",
+                UiLocale::En => "Target file paths (multiple allowed)",
+            })
+        })
+        .mut_arg("overlay", |arg| {
+            arg.help(match locale {
+                UiLocale::Ja => "overlay として強制登録する",
+                UiLocale::En => "Force overlay registration",
             })
         })
         .mut_arg("phantom", |arg| {
             arg.help(match locale {
-                UiLocale::Ja => "phantom (ローカル専用ファイル) として登録する",
-                UiLocale::En => "Register as a phantom (local-only file)",
+                UiLocale::Ja => "phantom (ローカル専用ファイル) として強制登録する",
+                UiLocale::En => "Force phantom registration",
             })
         })
         .mut_arg("no_exclude", |arg| {
@@ -160,6 +173,12 @@ fn localize_subcommands(command: clap::Command, locale: UiLocale) -> clap::Comma
         sub.about(match locale {
             UiLocale::Ja => "管理対象ファイルと状態を表示する",
             UiLocale::En => "Show managed files and their status",
+        })
+        .mut_arg("git", |arg| {
+            arg.help(match locale {
+                UiLocale::Ja => "`git status --short --branch` も先に表示する",
+                UiLocale::En => "Also show `git status --short --branch` first",
+            })
         })
     });
     let command = command.mut_subcommand("diff", |sub| {

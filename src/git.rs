@@ -195,6 +195,24 @@ impl GitRepo {
         Ok((false, false))
     }
 
+    /// Return `git status --short --branch` output.
+    pub fn status_short(&self) -> anyhow::Result<String> {
+        let output = Command::new("git")
+            .args(["status", "--short", "--branch"])
+            .current_dir(&self.root)
+            .output()
+            .context("failed to run git status")?;
+
+        if !output.status.success() {
+            bail!(
+                "git status --short --branch failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    }
+
     /// Stage a file (git add)
     pub fn add(&self, path: &str) -> anyhow::Result<()> {
         self.run_git(&["add", path])?;
@@ -227,7 +245,7 @@ impl GitRepo {
     /// Check if hooks are installed
     pub fn hooks_installed(&self) -> bool {
         let hooks_dir = self.hooks_dir();
-        ["pre-commit", "post-commit", "post-merge"]
+        ["pre-commit", "post-commit", "post-merge", "post-rewrite"]
             .iter()
             .all(|name| {
                 let hook = hooks_dir.join(name);

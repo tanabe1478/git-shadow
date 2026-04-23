@@ -58,12 +58,14 @@ echo "  # 個人用デバッグポート" >> docker-compose.yml
 ```bash
 # 新しいローカル限定ファイルを作成して登録
 echo "#!/bin/bash" > scripts/local-setup.sh
-git-shadow add --phantom scripts/local-setup.sh
+git-shadow add scripts/local-setup.sh
 ```
 
 デフォルトでは `.git/info/exclude` に追加され、`git status` に表示されなくなります。
 
 **オプション:**
+- `--overlay` — 指定したパスをすべて overlay として強制登録
+- `--phantom` — 指定したパスをすべて phantom として強制登録
 - `--no-exclude` — `.git/info/exclude` への追加をスキップ。`git status` には未追跡ファイルとして表示されますが、pre-commit hook によりコミットからは除外されます。
 
 #### Phantom ディレクトリ
@@ -101,8 +103,18 @@ git-shadow status
 
 管理対象ファイルの情報を表示:
 - Overlay: ベースラインのコミットハッシュ、差分行数 (+/- 行)
+- Overlay: 現在の Git 状態 (`clean`, `modified`, `staged`, `partially staged`)
+- Overlay: stage 済み local-only changes が commit 前に取り除かれる警告
 - Phantom: exclude モード、ファイルサイズ
 - stale lock、stash 残留、ベースラインずれの警告
+
+通常の Git 出力も含めた opt-in 表示を使いたい場合:
+
+```bash
+git shadow status --git
+```
+
+`git status --short --branch` を先に表示し、その後に shadow 管理対象の意味づけを表示します。デフォルトでは `git status` 自体は置き換えません。
 
 ### Diff
 
@@ -221,6 +233,8 @@ git-shadow restore docker-compose.yml
 - 退避ファイルをワーキングツリーに復元
 - stale lockfile を削除
 - stash ディレクトリをクリーンアップ
+
+`git commit` 中に stale lock が見つかった場合も、作業ツリーを安全に復元できると判断できるときは自動回復を試みます。新しい内容を上書きする恐れがある場合だけ、従来どおり手動 `git-shadow restore` が必要です。
 
 ## 診断
 
@@ -353,6 +367,14 @@ worktree を使う場合、suspend/resume は不要です（各 worktree が独�
 ### 部分ステージ
 
 git-shadow は overlay ファイルの部分ステージ (`git add -p`) をサポートしていません。overlay ファイルにステージ済みと未ステージの変更が同時に存在する場合、pre-commit hook がコミットをブロックします。コミット前に `git add <file>` でファイル全体をステージしてください。
+
+### `git add` 時のガード
+
+Git には一般的な pre-`add` hook がないため、git-shadow はすべての `git add` の直前には警告できません。代わりに:
+
+- `git-shadow status` で overlay が local-only かつ stage 済みかを表示します
+- `git shadow status --git` で通常の Git 状態を含む opt-in 表示を使えます
+- pre-commit hook が local-only な overlay 変更が取り除かれることを警告します
 
 ### バイナリファイル
 

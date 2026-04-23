@@ -65,6 +65,7 @@ fn test_install_in_worktree() {
     assert!(hooks_dir.join("pre-commit").exists());
     assert!(hooks_dir.join("post-commit").exists());
     assert!(hooks_dir.join("post-merge").exists());
+    assert!(hooks_dir.join("post-rewrite").exists());
 
     // Hooks should NOT be under worktree's git_dir
     assert!(!wt_repo.git_dir.join("hooks").join("pre-commit").exists());
@@ -204,7 +205,7 @@ fn install_hooks_for_test(git: &GitRepo) {
     let hooks_dir = git.hooks_dir();
     std::fs::create_dir_all(&hooks_dir).unwrap();
 
-    for name in &["pre-commit", "post-commit", "post-merge"] {
+    for name in &["pre-commit", "post-commit", "post-merge", "post-rewrite"] {
         let content = format!("#!/bin/sh\nexec git-shadow hook {}\n", name);
         std::fs::write(hooks_dir.join(name), content).unwrap();
 
