@@ -119,9 +119,57 @@ impl GitRepo {
         }
     }
 
-    /// Get the hooks directory (lives under common_dir, shared across worktrees)
+    /// Get the default hooks directory (lives under common_dir, shared across worktrees).
+    ///
+    /// This ignores `core.hooksPath`; use [`GitRepo::effective_hooks_dir`] when you need
+    /// the directory Git actually runs hooks from.
     pub fn hooks_dir(&self) -> PathBuf {
         self.common_dir.join("hooks")
+    }
+
+    /// Read the `core.hooksPath` configuration value.
+    ///
+    /// Returns `None` when it is unset or empty. The value may be absolute or relative;
+    /// relative values are resolved against the working-tree root by
+    /// [`GitRepo::effective_hooks_dir`].
+    pub fn hooks_path_config(&self) -> Option<String> {
+        let output = Command::new("git")
+            .args(["config", "--get", "core.hooksPath"])
+            .current_dir(&self.root)
+            .output()
+            .ok()?;
+
+        if !output.status.success() {
+            return None;
+        }
+
+        let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if value.is_empty() {
+            None
+        } else {
+            Some(value)
+        }
+    }
+
+    /// Resolve the effective hooks directory Git will run hooks from.
+    ///
+    /// When `core.hooksPath` is set (e.g. by husky, lefthook, or this repo's own
+    /// `dev-hooks` recommendation), hooks in the default `common_dir/hooks` never run,
+    /// so shadow hooks must be installed into the custom directory instead. When it is
+    /// unset, this falls back to [`GitRepo::hooks_dir`] to preserve worktree semantics
+    /// (hooks are shared via `common_dir`).
+    pub fn effective_hooks_dir(&self) -> PathBuf {
+        match self.hooks_path_config() {
+            Some(hooks_path) => {
+                let path = PathBuf::from(&hooks_path);
+                if path.is_absolute() {
+                    path
+                } else {
+                    self.root.join(path)
+                }
+            }
+            None => self.hooks_dir(),
+        }
     }
 
     /// Enumerate the working-tree paths of all worktrees attached to this repository.
@@ -273,7 +321,7 @@ impl GitRepo {
 
     /// Check if hooks are installed
     pub fn hooks_installed(&self) -> bool {
-        let hooks_dir = self.hooks_dir();
+        let hooks_dir = self.effective_hooks_dir();
         ["pre-commit", "post-commit", "post-merge", "post-rewrite"]
             .iter()
             .all(|name| {
@@ -532,6 +580,39 @@ mod tests {
 
         // git_dir should differ from common_dir in worktree
         assert_ne!(wt_repo.git_dir, wt_repo.common_dir);
+    }
+
+    #[test]
+    fn test_hooks_path_config_none_when_unset() {
+        let (_dir, repo) = make_test_repo();
+        assert!(repo.hooks_path_config().is_none());
+        assert_eq!(repo.effective_hooks_dir(), repo.hooks_dir());
+    }
+
+    #[test]
+    fn test_effective_hooks_dir_honors_relative_hooks_path() {
+        let (_dir, repo) = make_test_repo();
+        run_cmd(
+            &repo.root,
+            "git",
+            &["config", "core.hooksPath", "dev-hooks"],
+        );
+
+        assert_eq!(repo.hooks_path_config().as_deref(), Some("dev-hooks"));
+        assert_eq!(repo.effective_hooks_dir(), repo.root.join("dev-hooks"));
+    }
+
+    #[test]
+    fn test_effective_hooks_dir_honors_absolute_hooks_path() {
+        let (_dir, repo) = make_test_repo();
+        let abs = repo.root.join("custom-hooks");
+        run_cmd(
+            &repo.root,
+            "git",
+            &["config", "core.hooksPath", abs.to_str().unwrap()],
+        );
+
+        assert_eq!(repo.effective_hooks_dir(), abs);
     }
 
     #[test]

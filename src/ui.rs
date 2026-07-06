@@ -124,6 +124,41 @@ pub fn install_success(locale: UiLocale) -> &'static str {
     )
 }
 
+pub fn install_custom_hooks_path(locale: UiLocale, hooks_path: &str, resolved: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!(
+            "note: core.hooksPath ({hooks_path}) が設定されているため、hooks を {resolved} にインストールしました"
+        ),
+        UiLocale::En => format!(
+            "note: core.hooksPath ({hooks_path}) is set, so hooks were installed into {resolved}"
+        ),
+    }
+}
+
+pub fn uninstall_success(locale: UiLocale) -> &'static str {
+    choose(
+        locale,
+        "git-shadow を uninstall しました (hooks・exclude・state を削除しました)",
+        "git-shadow uninstalled (hooks, exclude entries, and state removed)",
+    )
+}
+
+pub fn uninstall_hook_restored(locale: UiLocale, hook: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!("{hook} hook の pre-shadow backup を復元しました"),
+        UiLocale::En => format!("restored pre-shadow backup for {hook} hook"),
+    }
+}
+
+pub fn uninstall_forced_overlays(locale: UiLocale, count: usize) -> String {
+    match locale {
+        UiLocale::Ja => {
+            format!("{count} 件の overlay の baseline を working tree に復元しました")
+        }
+        UiLocale::En => format!("restored baselines to the working tree for {count} overlay(s)"),
+    }
+}
+
 pub fn inherited_from_main_worktree(locale: UiLocale, count: usize) -> String {
     match locale {
         UiLocale::Ja => format!("main worktree から {count} 件のファイル設定を引き継ぎました"),
@@ -436,6 +471,17 @@ pub fn doctor_hook_not_executable(locale: UiLocale, hook: &str) -> String {
     match locale {
         UiLocale::Ja => format!("{hook} hook に実行権限がありません"),
         UiLocale::En => format!("{hook} hook is not executable"),
+    }
+}
+
+pub fn doctor_hooks_inert(locale: UiLocale, hooks_path: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!(
+            "hooks は既定の hooks dir にありますが core.hooksPath ({hooks_path}) が別を指しているため実行されません。`git-shadow install` を再実行してください"
+        ),
+        UiLocale::En => format!(
+            "hooks are installed in the default hooks dir but core.hooksPath ({hooks_path}) points elsewhere, so they never run. Re-run `git-shadow install`"
+        ),
     }
 }
 
@@ -859,6 +905,15 @@ fn format_shadow_error_ja(err: &ShadowError) -> String {
             "エラー: hooks が未インストールです。`git-shadow install` を実行してください"
                 .to_string()
         }
+        ShadowError::UninstallHasEntries(count) => format!(
+            "エラー: {count} 件のファイルがまだ git-shadow の管理対象です。\n\
+             対処:\n\
+             1. `git-shadow remove <file>` で個別に解除する\n\
+             2. または `git-shadow uninstall --force` で overlay を復元して state を削除する"
+        ),
+        ShadowError::DoctorFoundIssues(count) => {
+            format!("エラー: doctor が {count} 件の問題を検出しました")
+        }
         ShadowError::NonInteractiveWithoutForce => {
             "エラー: 非対話モードでは `--force` が必要です".to_string()
         }
@@ -987,6 +1042,15 @@ What to do:\n\
         ShadowError::NotSuspended => "Error: shadow changes are not suspended".to_string(),
         ShadowError::HooksNotInstalled => {
             "Error: hooks not installed. Run `git-shadow install`".to_string()
+        }
+        ShadowError::UninstallHasEntries(count) => format!(
+            "Error: {count} file(s) are still managed by git-shadow.\n\
+             What to do:\n\
+             1. Run `git-shadow remove <file>` for each file\n\
+             2. Or run `git-shadow uninstall --force` to restore overlays and wipe state"
+        ),
+        ShadowError::DoctorFoundIssues(count) => {
+            format!("Error: doctor found {count} issue(s)")
         }
         ShadowError::NonInteractiveWithoutForce => {
             "Error: `--force` is required in non-interactive mode".to_string()

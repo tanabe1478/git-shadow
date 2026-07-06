@@ -82,6 +82,12 @@ pub enum ShadowError {
     #[error("hooks not installed. Run `git-shadow install`")]
     HooksNotInstalled,
 
+    #[error("{0} file(s) are still managed by git-shadow. Remove them first or pass --force")]
+    UninstallHasEntries(usize),
+
+    #[error("doctor found {0} issue(s)")]
+    DoctorFoundIssues(usize),
+
     #[error("cannot run in non-interactive mode without --force")]
     NonInteractiveWithoutForce,
 

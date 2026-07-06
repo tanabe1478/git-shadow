@@ -13,7 +13,7 @@ fn generate_hook_script(hook_name: &str) -> String {
     format!(
         r#"#!/bin/sh
 # git-shadow managed hook
-HOOKS_DIR="$(cd "$(git rev-parse --git-common-dir)" && pwd)/hooks"
+HOOKS_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 git-shadow hook {hook_name}
 SHADOW_EXIT=$?
@@ -44,7 +44,10 @@ pub fn run() -> Result<()> {
     // In a worktree, inherit config from main repo if available
     inherit_from_main_worktree(&git)?;
 
-    let hooks_dir = git.hooks_dir();
+    // Honor core.hooksPath: if set (husky, lefthook, dev-hooks, ...), hooks in the
+    // default common_dir/hooks would never run, so install into the effective directory.
+    let hooks_dir = git.effective_hooks_dir();
+    let custom_hooks_path = git.hooks_path_config();
     std::fs::create_dir_all(&hooks_dir).context("failed to create hooks directory")?;
 
     for hook_name in HOOK_NAMES {
@@ -71,6 +74,13 @@ pub fn run() -> Result<()> {
         let mut perms = std::fs::metadata(&hook_path)?.permissions();
         perms.set_mode(0o755);
         std::fs::set_permissions(&hook_path, perms)?;
+    }
+
+    if let Some(hooks_path) = custom_hooks_path {
+        println!(
+            "{}",
+            ui::install_custom_hooks_path(locale, &hooks_path, &hooks_dir.display().to_string())
+        );
     }
 
     println!("{}", ui::install_success(locale));
@@ -185,7 +195,7 @@ mod tests {
         std::fs::create_dir_all(shadow_dir.join("baselines")).unwrap();
         std::fs::create_dir_all(shadow_dir.join("stash")).unwrap();
 
-        let hooks_dir = git.hooks_dir();
+        let hooks_dir = git.effective_hooks_dir();
         std::fs::create_dir_all(&hooks_dir).unwrap();
 
         for hook_name in HOOK_NAMES {
@@ -270,6 +280,40 @@ mod tests {
     }
 
     #[test]
+    fn test_install_respects_hooks_path() {
+        let (_dir, git) = make_test_repo();
+
+        // Simulate husky/lefthook/dev-hooks: core.hooksPath points elsewhere.
+        std::process::Command::new("git")
+            .args(["config", "core.hooksPath", "dev-hooks"])
+            .current_dir(&git.root)
+            .output()
+            .unwrap();
+
+        install_hooks(&git);
+
+        // Hooks must land in the custom directory, not common_dir/hooks.
+        let custom_dir = git.root.join("dev-hooks");
+        for name in HOOK_NAMES {
+            let hook = custom_dir.join(name);
+            assert!(hook.exists(), "{} should exist in custom hooks dir", name);
+            let content = std::fs::read_to_string(&hook).unwrap();
+            assert!(content.contains(&format!("git-shadow hook {}", name)));
+        }
+
+        // Nothing should have been written to the default hooks dir.
+        for name in HOOK_NAMES {
+            assert!(
+                !git.hooks_dir().join(name).exists(),
+                "{} should NOT exist in default hooks dir",
+                name
+            );
+        }
+
+        assert!(git.hooks_installed());
+    }
+
+    #[test]
     fn test_creates_shadow_directories() {
         let (_dir, git) = make_test_repo();
         install_hooks(&git);
@@ -308,7 +352,7 @@ mod tests {
 
         super::inherit_from_main_worktree(git).unwrap();
 
-        let hooks_dir = git.hooks_dir();
+        let hooks_dir = git.effective_hooks_dir();
         std::fs::create_dir_all(&hooks_dir).unwrap();
 
         for hook_name in HOOK_NAMES {
