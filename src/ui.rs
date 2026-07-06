@@ -390,6 +390,17 @@ pub fn post_commit_read_stash_failed(locale: UiLocale, path: &str, error: &str) 
     }
 }
 
+pub fn post_commit_restore_conflict(locale: UiLocale, path: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!(
+            "warning: {path} は commit 後に編集されているため上書きしませんでした。`git-shadow restore` で確認してください"
+        ),
+        UiLocale::En => format!(
+            "warning: {path} was edited after the commit, so it was left untouched. Run `git-shadow restore` to review"
+        ),
+    }
+}
+
 pub fn post_commit_partial_failure(locale: UiLocale) -> &'static str {
     choose(
         locale,
@@ -822,6 +833,13 @@ fn format_shadow_error_ja(err: &ShadowError) -> String {
              2. 必要なら退避してから `git-shadow restore` を実行する\n\
              3. その後で `git commit` をやり直す"
         ),
+        ShadowError::ResumeEditConflict(file) => format!(
+            "resume を止めました: suspend 中に編集された `{file}` を上書きする可能性があります。\n\
+             対処:\n\
+             1. `{file}` の現在内容を確認する\n\
+             2. 残したい内容を退避する\n\
+             3. `.git/shadow/suspended/` の内容と統合してから再度 `git-shadow resume` を実行する"
+        ),
         ShadowError::NotInitialized => "\
 エラー: git-shadow がまだ初期化されていません。\n\
 対処:\n\
@@ -946,6 +964,13 @@ What to do:\n\
              1. Review the current contents of `{file}`\n\
              2. Save anything you need, then run `git-shadow restore`\n\
              3. Run `git commit` again"
+        ),
+        ShadowError::ResumeEditConflict(file) => format!(
+            "Resume blocked: `{file}` was edited in the working tree while suspended, and resume would overwrite it.\n\
+             What to do:\n\
+             1. Review the current contents of `{file}`\n\
+             2. Save anything you want to keep\n\
+             3. Reconcile with `.git/shadow/suspended/`, then run `git-shadow resume` again"
         ),
         ShadowError::NotInitialized => "\
 Error: git-shadow is not initialized yet.\n\

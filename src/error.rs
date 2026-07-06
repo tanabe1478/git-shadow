@@ -44,6 +44,11 @@ pub enum ShadowError {
     #[error("automatic stale-lock recovery would overwrite newer working tree content in '{0}'. Run `git-shadow restore` manually")]
     AutoRestoreConflict(String),
 
+    #[error(
+        "resume would overwrite working tree edits made to '{0}' while suspended. Resolve manually"
+    )]
+    ResumeEditConflict(String),
+
     #[error("stash has remaining files. Run `git-shadow restore`")]
     StashRemaining,
 
