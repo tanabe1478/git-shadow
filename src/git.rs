@@ -124,6 +124,35 @@ impl GitRepo {
         self.common_dir.join("hooks")
     }
 
+    /// Enumerate the working-tree paths of all worktrees attached to this repository.
+    ///
+    /// Uses `git worktree list --porcelain`. If enumeration fails (e.g. Git too old),
+    /// falls back to just this worktree's root so callers keep working.
+    pub fn list_worktree_paths(&self) -> Vec<PathBuf> {
+        let mut paths = Vec::new();
+
+        if let Ok(output) = Command::new("git")
+            .args(["worktree", "list", "--porcelain"])
+            .current_dir(&self.root)
+            .output()
+        {
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                for line in stdout.lines() {
+                    if let Some(rest) = line.strip_prefix("worktree ") {
+                        paths.push(PathBuf::from(rest.trim()));
+                    }
+                }
+            }
+        }
+
+        if paths.is_empty() {
+            paths.push(self.root.clone());
+        }
+
+        paths
+    }
+
     /// Get current HEAD commit hash (full)
     pub fn head_commit(&self) -> anyhow::Result<String> {
         let output = self.run_git(&["rev-parse", "HEAD"])?;

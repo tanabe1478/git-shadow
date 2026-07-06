@@ -2,7 +2,7 @@ use anyhow::Result;
 use colored::Colorize;
 use is_terminal::IsTerminal;
 
-use crate::config::{ExcludeMode, FileType, ShadowConfig};
+use crate::config::{FileType, ShadowConfig};
 use crate::error::ShadowError;
 use crate::exclude::ExcludeManager;
 use crate::git::GitRepo;
@@ -48,16 +48,20 @@ pub fn run(file: &str, force: bool) -> Result<()> {
         }
     }
 
-    match entry.file_type {
-        FileType::Overlay => {
-            remove_overlay(&git, &normalized)?;
-        }
-        FileType::Phantom => {
-            remove_phantom(&git, &normalized, &entry.exclude_mode, entry.is_directory)?;
-        }
+    if entry.file_type == FileType::Overlay {
+        remove_overlay(&git, &normalized)?;
     }
 
     config.remove(&normalized)?;
+
+    // Regenerate the shared exclude section from the union of all worktrees' configs.
+    // This keeps entries that other worktrees still rely on (config is per-worktree but
+    // .git/info/exclude is shared), and only drops the removed entry if no worktree needs
+    // it anymore.
+    let manager = ExcludeManager::new(&git.common_dir);
+    let patterns = crate::exclude::union_patterns(&git, &config);
+    manager.set_entries(&patterns)?;
+
     config.save(&git.shadow_dir)?;
 
     println!("{}", ui::unregistered(locale, &normalized).green());
@@ -75,26 +79,6 @@ fn remove_overlay(git: &GitRepo, file_path: &str) -> Result<()> {
         let baseline = std::fs::read(&baseline_path)?;
         std::fs::write(&worktree_path, &baseline)?;
         std::fs::remove_file(&baseline_path)?;
-    }
-
-    Ok(())
-}
-
-fn remove_phantom(
-    git: &GitRepo,
-    file_path: &str,
-    exclude_mode: &ExcludeMode,
-    is_directory: bool,
-) -> Result<()> {
-    // Remove from .git/info/exclude if applicable
-    if *exclude_mode == ExcludeMode::GitInfoExclude {
-        let exclude_path = if is_directory {
-            format!("{}/", file_path)
-        } else {
-            file_path.to_string()
-        };
-        let manager = ExcludeManager::new(&git.common_dir);
-        manager.remove_entry(&exclude_path)?;
     }
 
     Ok(())
@@ -384,5 +368,84 @@ mod tests {
 
         let entries = manager.list_entries().unwrap();
         assert!(!entries.contains(&"local.md".to_string()));
+    }
+
+    #[test]
+    fn test_remove_keeps_exclude_entry_used_by_another_worktree() {
+        use std::process::Command;
+
+        // Main repo with an installed shadow config.
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        Command::new("git")
+            .args(["init"])
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["config", "user.name", "Test"])
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["config", "user.email", "t@t.com"])
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        std::fs::write(root.join("CLAUDE.md"), "# Team\n").unwrap();
+        Command::new("git")
+            .args(["add", "CLAUDE.md"])
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["commit", "-m", "init"])
+            .current_dir(&root)
+            .output()
+            .unwrap();
+
+        let main_git = GitRepo::discover(&root).unwrap();
+        std::fs::create_dir_all(main_git.shadow_dir.join("baselines")).unwrap();
+        std::fs::create_dir_all(main_git.shadow_dir.join("stash")).unwrap();
+
+        // Both worktrees manage the same phantom `local.md`.
+        let mut main_config = ShadowConfig::new();
+        main_config
+            .add_phantom("local.md".to_string(), ExcludeMode::GitInfoExclude, false)
+            .unwrap();
+        main_config.save(&main_git.shadow_dir).unwrap();
+
+        // Create a worktree and give it its own config referencing the same phantom.
+        let wt_path = dir.path().join("worktree");
+        Command::new("git")
+            .args([
+                "worktree",
+                "add",
+                "-b",
+                "wt-branch",
+                wt_path.to_str().unwrap(),
+            ])
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        let wt_git = GitRepo::discover(&wt_path).unwrap();
+        std::fs::create_dir_all(wt_git.shadow_dir.join("baselines")).unwrap();
+        std::fs::create_dir_all(wt_git.shadow_dir.join("stash")).unwrap();
+        let mut wt_config = ShadowConfig::new();
+        wt_config
+            .add_phantom("local.md".to_string(), ExcludeMode::GitInfoExclude, false)
+            .unwrap();
+        wt_config.save(&wt_git.shadow_dir).unwrap();
+
+        // Simulate removing `local.md` from the main worktree only.
+        main_config.remove("local.md").unwrap();
+        let patterns = crate::exclude::union_patterns(&main_git, &main_config);
+
+        // The worktree still references it, so the shared entry must remain.
+        assert!(
+            patterns.contains(&"/local.md".to_string()),
+            "shared exclude entry must be kept, got: {:?}",
+            patterns
+        );
     }
 }
