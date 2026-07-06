@@ -35,6 +35,12 @@ pub enum ShadowError {
     #[error("stale lock detected (PID {0} no longer exists). Run `git-shadow restore`")]
     StaleLock(u32),
 
+    #[error("lockfile is corrupted (unreadable). Run `git-shadow restore`")]
+    CorruptLock,
+
+    #[error("3-way merge failed: {0}")]
+    MergeFailed(String),
+
     #[error("automatic stale-lock recovery would overwrite newer working tree content in '{0}'. Run `git-shadow restore` manually")]
     AutoRestoreConflict(String),
 

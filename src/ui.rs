@@ -354,6 +354,17 @@ pub fn auto_rebase_conflict_warning(locale: UiLocale, path: &str) -> String {
     }
 }
 
+pub fn auto_rebase_skipped_locked(locale: UiLocale, trigger: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!(
+            "warning: {trigger} の自動 rebase をスキップしました (別の git-shadow 処理が lock を保持しています)。必要なら後で `git-shadow rebase` を実行してください"
+        ),
+        UiLocale::En => format!(
+            "warning: skipped {trigger} auto-rebase because another git-shadow process holds the lock. Run `git-shadow rebase` later if needed"
+        ),
+    }
+}
+
 pub fn auto_rebase_failed(locale: UiLocale, path: &str, trigger: &str, error: &str) -> String {
     match locale {
         UiLocale::Ja => {
@@ -794,6 +805,16 @@ fn format_shadow_error_ja(err: &ShadowError) -> String {
              2. `git status` を確認する\n\
              3. もう一度 `git commit` する"
         ),
+        ShadowError::CorruptLock => "\
+コミットを止めました: lockfile が壊れています (内容を解釈できません)。\n\
+対処:\n\
+1. `git-shadow restore` を実行して lock を片付ける\n\
+2. `git status` を確認する\n\
+3. もう一度 `git commit` する"
+            .to_string(),
+        ShadowError::MergeFailed(stderr) => {
+            format!("エラー: 3-way merge に失敗しました:\n{stderr}")
+        }
         ShadowError::AutoRestoreConflict(file) => format!(
             "コミットを止めました: stale lock の自動回復で `{file}` を上書きする可能性があります。\n\
              対処:\n\
@@ -909,6 +930,16 @@ What to do:\n\
              2. Check `git status`\n\
              3. Run `git commit` again"
         ),
+        ShadowError::CorruptLock => "\
+Commit blocked: the lockfile is corrupted (its contents could not be parsed).\n\
+What to do:\n\
+1. Run `git-shadow restore`\n\
+2. Check `git status`\n\
+3. Run `git commit` again"
+            .to_string(),
+        ShadowError::MergeFailed(stderr) => {
+            format!("Error: 3-way merge failed:\n{stderr}")
+        }
         ShadowError::AutoRestoreConflict(file) => format!(
             "Commit blocked: automatic stale-lock recovery would overwrite newer working tree content in `{file}`.\n\
              What to do:\n\

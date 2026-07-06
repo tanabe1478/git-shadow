@@ -2,7 +2,10 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 
+use crate::error::ShadowError;
+
 /// Result of a 3-way merge
+#[derive(Debug)]
 pub struct MergeResult {
     /// The merged content
     pub content: String,
@@ -40,29 +43,45 @@ pub fn three_way_merge(
     std::fs::write(ours_file.path(), ours)?;
     std::fs::write(theirs_file.path(), theirs)?;
 
-    // git merge-file modifies ours_file in place and returns:
-    // 0: clean merge
-    // >0: number of conflicts
-    // <0: error
+    run_merge_file(ours_file.path(), base_file.path(), theirs_file.path())
+}
+
+/// Run `git merge-file -p --diff3 <ours> <base> <theirs>` and interpret the result.
+///
+/// `git merge-file` exit codes:
+/// - `0` => clean merge (no conflicts)
+/// - `1..=127` => number of conflicts (capped at 127); merge succeeded with markers
+/// - otherwise => the merge itself failed (git returns a negative value on error, which
+///   surfaces as an exit code in the 128..=255 range), or the process was killed by a
+///   signal (`code()` is `None`). In these cases stdout is unusable (typically empty), so
+///   writing it to the working tree would truncate the user's file. Report an error instead.
+fn run_merge_file(ours: &Path, base: &Path, theirs: &Path) -> Result<MergeResult> {
     let output = std::process::Command::new("git")
         .args([
             "merge-file",
             "-p",      // print to stdout instead of modifying file
             "--diff3", // show base content in conflict markers
         ])
-        .arg(ours_file.path())
-        .arg(base_file.path())
-        .arg(theirs_file.path())
+        .arg(ours)
+        .arg(base)
+        .arg(theirs)
         .output()
         .context("failed to run git merge-file")?;
 
-    let content = String::from_utf8_lossy(&output.stdout).to_string();
-    let has_conflicts = output.status.code().unwrap_or(-1) > 0;
-
-    Ok(MergeResult {
-        content,
-        has_conflicts,
-    })
+    match output.status.code() {
+        Some(0) => Ok(MergeResult {
+            content: String::from_utf8_lossy(&output.stdout).to_string(),
+            has_conflicts: false,
+        }),
+        Some(n) if (1..=127).contains(&n) => Ok(MergeResult {
+            content: String::from_utf8_lossy(&output.stdout).to_string(),
+            has_conflicts: true,
+        }),
+        _ => {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            Err(ShadowError::MergeFailed(stderr).into())
+        }
+    }
 }
 
 #[cfg(test)]
@@ -127,5 +146,54 @@ mod tests {
         let result = three_way_merge(base, ours, theirs, dir.path()).unwrap();
         assert!(!result.has_conflicts);
         assert!(result.content.contains("their addition"));
+    }
+
+    #[test]
+    fn test_merge_error_is_reported_not_treated_as_conflict() {
+        // Force a real `git merge-file` error by passing a directory as the
+        // `ours` path. On error, git returns a negative value (surfacing as a
+        // high exit code) with empty stdout — this must be an Err, never a
+        // MergeResult with empty content that would truncate the file.
+        let dir = tempfile::tempdir().unwrap();
+        let sub_dir = dir.path().join("is-a-directory");
+        std::fs::create_dir(&sub_dir).unwrap();
+
+        let base = dir.path().join("base");
+        let theirs = dir.path().join("theirs");
+        std::fs::write(&base, "a\n").unwrap();
+        std::fs::write(&theirs, "a\n").unwrap();
+
+        let result = run_merge_file(&sub_dir, &base, &theirs);
+        assert!(result.is_err(), "merge error must surface as Err");
+        let err = result.unwrap_err();
+        assert!(
+            err.downcast_ref::<ShadowError>()
+                .map(|e| matches!(e, ShadowError::MergeFailed(_)))
+                .unwrap_or(false),
+            "error should be ShadowError::MergeFailed, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_run_merge_file_clean_and_conflict() {
+        let dir = tempfile::tempdir().unwrap();
+        // Clean merge
+        let base = dir.path().join("base");
+        let ours = dir.path().join("ours");
+        let theirs = dir.path().join("theirs");
+        std::fs::write(&base, "line1\nline2\n").unwrap();
+        std::fs::write(&ours, "line1\nline2\nline3\n").unwrap();
+        std::fs::write(&theirs, "line1\nline2\n").unwrap();
+        let clean = run_merge_file(&ours, &base, &theirs).unwrap();
+        assert!(!clean.has_conflicts);
+        assert!(clean.content.contains("line3"));
+
+        // Conflicting merge
+        std::fs::write(&base, "line1\n").unwrap();
+        std::fs::write(&ours, "ours\n").unwrap();
+        std::fs::write(&theirs, "theirs\n").unwrap();
+        let conflict = run_merge_file(&ours, &base, &theirs).unwrap();
+        assert!(conflict.has_conflicts);
+        assert!(conflict.content.contains("<<<<<<<"));
     }
 }

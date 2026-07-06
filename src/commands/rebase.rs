@@ -5,6 +5,7 @@ use crate::config::{FileType, ShadowConfig};
 use crate::error::ShadowError;
 use crate::fs_util;
 use crate::git::GitRepo;
+use crate::lock;
 use crate::merge;
 use crate::path;
 use crate::ui;
@@ -178,11 +179,36 @@ pub(crate) fn rebase_file_with_mode(
 }
 
 pub fn auto_rebase_all(git: &GitRepo, trigger: &str) -> Result<()> {
-    let mut config = ShadowConfig::load(&git.shadow_dir)?;
+    let config = ShadowConfig::load(&git.shadow_dir)?;
     if config.suspended || config.files.is_empty() {
         return Ok(());
     }
 
+    // This runs from post-merge/post-rewrite hooks and mutates the working tree,
+    // baselines and config.json, so it must hold the shadow lock. If another
+    // git-shadow process holds it (e.g. a commit is in progress) or the lock is
+    // stale/corrupt, skip with a warning rather than failing the git operation.
+    let locale = ui::detect_locale();
+    match lock::acquire_lock(&git.shadow_dir) {
+        Ok(()) => {}
+        Err(
+            ShadowError::LockHeld { .. } | ShadowError::StaleLock(_) | ShadowError::CorruptLock,
+        ) => {
+            eprintln!(
+                "{}",
+                ui::auto_rebase_skipped_locked(locale, trigger).yellow()
+            );
+            return Ok(());
+        }
+        Err(e) => return Err(e.into()),
+    }
+
+    let result = auto_rebase_all_locked(git, config, trigger);
+    lock::release_lock(&git.shadow_dir).ok();
+    result
+}
+
+fn auto_rebase_all_locked(git: &GitRepo, mut config: ShadowConfig, trigger: &str) -> Result<()> {
     let head = git.head_commit()?;
     let file_paths: Vec<String> = config.files.keys().cloned().collect();
 
@@ -448,6 +474,108 @@ mod tests {
         // Verify working tree is unchanged (shadow changes preserved)
         let wt = std::fs::read_to_string(git.root.join("CLAUDE.md")).unwrap();
         assert_eq!(wt, "# Team\n# My shadow\n");
+    }
+
+    fn setup_outdated_overlay(git: &GitRepo) -> String {
+        // Overlay whose baseline is behind HEAD, so auto_rebase_all would act on
+        // it. Base and upstream edits touch different regions so the 3-way merge
+        // is clean (no conflict), letting auto-rebase update the baseline.
+        std::fs::write(git.root.join("CLAUDE.md"), "line1\nline2\nline3\n").unwrap();
+        std::process::Command::new("git")
+            .args(["add", "CLAUDE.md"])
+            .current_dir(&git.root)
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["commit", "-m", "set base"])
+            .current_dir(&git.root)
+            .output()
+            .unwrap();
+        let old_commit = git.head_commit().unwrap();
+
+        let mut config = ShadowConfig::new();
+        let encoded = path::encode_path("CLAUDE.md");
+        fs_util::atomic_write(
+            &git.shadow_dir.join("baselines").join(&encoded),
+            b"line1\nline2\nline3\n",
+        )
+        .unwrap();
+        config
+            .add_overlay("CLAUDE.md".to_string(), old_commit)
+            .unwrap();
+        config.save(&git.shadow_dir).unwrap();
+
+        // Advance HEAD with an upstream change to the FIRST line.
+        std::fs::write(git.root.join("CLAUDE.md"), "line1 upstream\nline2\nline3\n").unwrap();
+        std::process::Command::new("git")
+            .args(["add", "CLAUDE.md"])
+            .current_dir(&git.root)
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["commit", "-m", "upstream"])
+            .current_dir(&git.root)
+            .output()
+            .unwrap();
+
+        // Shadow change appends at the END (non-conflicting region).
+        std::fs::write(
+            git.root.join("CLAUDE.md"),
+            "line1\nline2\nline3\nmy shadow\n",
+        )
+        .unwrap();
+        git.head_commit().unwrap()
+    }
+
+    #[test]
+    fn test_auto_rebase_all_releases_lock_on_success() {
+        let (_dir, git) = make_test_repo();
+        setup_outdated_overlay(&git);
+
+        super::auto_rebase_all(&git, "post-merge").unwrap();
+
+        // Lock must be released after a successful auto-rebase.
+        assert!(matches!(
+            crate::lock::check_lock(&git.shadow_dir).unwrap(),
+            crate::lock::LockStatus::Free
+        ));
+        // Baseline was updated (proves it actually ran under the lock).
+        let encoded = path::encode_path("CLAUDE.md");
+        let baseline =
+            std::fs::read_to_string(git.shadow_dir.join("baselines").join(&encoded)).unwrap();
+        assert_eq!(baseline, "line1 upstream\nline2\nline3\n");
+    }
+
+    #[test]
+    fn test_auto_rebase_all_skips_when_lock_held_live() {
+        let (_dir, git) = make_test_repo();
+        setup_outdated_overlay(&git);
+        let encoded = path::encode_path("CLAUDE.md");
+
+        // Live lock held by a real, signalable child process.
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        let lock_content = format!(
+            "pid={}\ntimestamp={}",
+            child.id(),
+            chrono::Utc::now().to_rfc3339()
+        );
+        std::fs::write(git.shadow_dir.join("lock"), &lock_content).unwrap();
+
+        let result = super::auto_rebase_all(&git, "post-merge");
+        let lock_after = std::fs::read_to_string(git.shadow_dir.join("lock")).unwrap();
+        let _ = child.kill();
+        let _ = child.wait();
+        result.unwrap();
+
+        // The foreign lock must be left untouched...
+        assert_eq!(lock_after, lock_content);
+        // ...and no rebase happened: baseline is still the old content.
+        let baseline =
+            std::fs::read_to_string(git.shadow_dir.join("baselines").join(&encoded)).unwrap();
+        assert_eq!(baseline, "line1\nline2\nline3\n");
     }
 
     /// Helper to rebase a file (bypasses cwd discovery)
