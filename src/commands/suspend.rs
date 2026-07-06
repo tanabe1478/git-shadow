@@ -40,26 +40,7 @@ pub fn run() -> Result<()> {
         return Ok(());
     }
 
-    // Create suspended directory
-    let suspended_dir = git.shadow_dir.join("suspended");
-    std::fs::create_dir_all(&suspended_dir).context("failed to create suspended directory")?;
-
-    let mut count = 0;
-
-    for (file_path, entry) in &config.files {
-        match entry.file_type {
-            FileType::Overlay => {
-                suspend_overlay(&git, &suspended_dir, file_path)?;
-                count += 1;
-            }
-            FileType::Phantom => {
-                if !entry.is_directory {
-                    suspend_phantom(&git, &suspended_dir, file_path)?;
-                    count += 1;
-                }
-            }
-        }
-    }
+    let count = perform_suspend(&git, &config)?;
 
     config.suspended = true;
     config.save(&git.shadow_dir)?;
@@ -70,34 +51,88 @@ pub fn run() -> Result<()> {
     Ok(())
 }
 
+/// Move all shadow changes into `suspended/`, restoring baselines / removing phantoms.
+///
+/// If any file fails mid-loop, the files already suspended are rolled back to the working
+/// tree so no changes are orphaned, and the error is returned.
+fn perform_suspend(git: &GitRepo, config: &ShadowConfig) -> Result<usize> {
+    let suspended_dir = git.shadow_dir.join("suspended");
+    std::fs::create_dir_all(&suspended_dir).context("failed to create suspended directory")?;
+
+    // Track paths that were actually moved into suspended/ so we can undo them.
+    let mut suspended: Vec<String> = Vec::new();
+
+    for (file_path, entry) in &config.files {
+        let step = match entry.file_type {
+            FileType::Overlay => suspend_overlay(git, &suspended_dir, file_path).map(|_| true),
+            FileType::Phantom if !entry.is_directory => {
+                suspend_phantom(git, &suspended_dir, file_path)
+            }
+            FileType::Phantom => Ok(false),
+        };
+
+        match step {
+            Ok(true) => suspended.push(file_path.clone()),
+            Ok(false) => {}
+            Err(e) => {
+                rollback_suspend(git, &suspended_dir, &suspended);
+                return Err(e);
+            }
+        }
+    }
+
+    Ok(suspended.len())
+}
+
+/// Restore already-suspended files back to the working tree and drop their suspended copy.
+fn rollback_suspend(git: &GitRepo, suspended_dir: &std::path::Path, suspended: &[String]) {
+    for file_path in suspended {
+        let encoded = path::encode_path(file_path);
+        let suspend_path = suspended_dir.join(&encoded);
+        let worktree_path = git.root.join(file_path);
+        if let Ok(content) = std::fs::read(&suspend_path) {
+            let _ = std::fs::write(&worktree_path, &content);
+            let _ = std::fs::remove_file(&suspend_path);
+        }
+    }
+}
+
 fn suspend_overlay(git: &GitRepo, suspended_dir: &std::path::Path, file_path: &str) -> Result<()> {
     let encoded = path::encode_path(file_path);
     let worktree_path = git.root.join(file_path);
     let baseline_path = git.shadow_dir.join("baselines").join(&encoded);
     let suspend_path = suspended_dir.join(&encoded);
 
-    // Save current working tree content (with shadow changes) to suspended/
+    // Read both inputs BEFORE mutating anything, so a read failure leaves no partial state.
     let content =
         std::fs::read(&worktree_path).with_context(|| format!("failed to read {}", file_path))?;
+    let baseline = std::fs::read(&baseline_path)
+        .with_context(|| format!("failed to read baseline for {}", file_path))?;
+
+    // Save current working tree content (with shadow changes) to suspended/
     fs_util::atomic_write(&suspend_path, &content)
         .with_context(|| format!("failed to save suspended content for {}", file_path))?;
 
     // Restore baseline content to working tree
-    let baseline = std::fs::read(&baseline_path)
-        .with_context(|| format!("failed to read baseline for {}", file_path))?;
     std::fs::write(&worktree_path, &baseline)
         .with_context(|| format!("failed to restore baseline for {}", file_path))?;
 
     Ok(())
 }
 
-fn suspend_phantom(git: &GitRepo, suspended_dir: &std::path::Path, file_path: &str) -> Result<()> {
+/// Returns `true` if the phantom was present and suspended, `false` if there was nothing
+/// to suspend (file absent).
+fn suspend_phantom(
+    git: &GitRepo,
+    suspended_dir: &std::path::Path,
+    file_path: &str,
+) -> Result<bool> {
     let encoded = path::encode_path(file_path);
     let worktree_path = git.root.join(file_path);
     let suspend_path = suspended_dir.join(&encoded);
 
     if !worktree_path.exists() {
-        return Ok(());
+        return Ok(false);
     }
 
     // Save phantom content to suspended/
@@ -110,7 +145,7 @@ fn suspend_phantom(git: &GitRepo, suspended_dir: &std::path::Path, file_path: &s
     std::fs::remove_file(&worktree_path)
         .with_context(|| format!("failed to remove {} from working tree", file_path))?;
 
-    Ok(())
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -257,6 +292,52 @@ mod tests {
         // Should detect already suspended via config
         let loaded = ShadowConfig::load(&git.shadow_dir).unwrap();
         assert!(loaded.suspended);
+    }
+
+    #[test]
+    fn test_perform_suspend_rolls_back_on_failure() {
+        let (_dir, git) = make_test_repo();
+        let commit = git.head_commit().unwrap();
+        let mut config = ShadowConfig::new();
+
+        // Overlay "a.md": has a baseline and will suspend successfully.
+        std::fs::write(git.root.join("a.md"), "a-shadow\n").unwrap();
+        let a_encoded = path::encode_path("a.md");
+        fs_util::atomic_write(
+            &git.shadow_dir.join("baselines").join(&a_encoded),
+            b"a-base\n",
+        )
+        .unwrap();
+        config
+            .add_overlay("a.md".to_string(), commit.clone())
+            .unwrap();
+
+        // Overlay "b.md": no baseline file -> suspend will fail (a < b, so a runs first).
+        std::fs::write(git.root.join("b.md"), "b-shadow\n").unwrap();
+        config.add_overlay("b.md".to_string(), commit).unwrap();
+
+        let result = super::perform_suspend(&git, &config);
+        assert!(result.is_err(), "suspend should fail on missing baseline");
+
+        // "a.md" must be rolled back to its original shadow content.
+        let a_content = std::fs::read_to_string(git.root.join("a.md")).unwrap();
+        assert_eq!(
+            a_content, "a-shadow\n",
+            "already-suspended file must be restored"
+        );
+
+        // No orphaned suspended files should remain.
+        let suspended_dir = git.shadow_dir.join("suspended");
+        let leftovers: Vec<_> = std::fs::read_dir(&suspended_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "no suspended files should be orphaned, found: {:?}",
+            leftovers
+        );
     }
 
     #[test]
