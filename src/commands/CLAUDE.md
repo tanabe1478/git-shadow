@@ -7,15 +7,16 @@ User-facing CLI commands. Each file corresponds to one subcommand and exposes a 
 | Command | File | Description |
 |---------|------|-------------|
 | `git-shadow install` | `install.rs` | Creates `.git/shadow/` dirs and installs hook scripts |
+| `git-shadow uninstall` | `uninstall.rs` | Removes shadow hooks and per-worktree state (refuses with active entries unless `--force`) |
 | `git-shadow add <file>` | `add.rs` | Registers overlay or phantom (with `--phantom`) |
 | `git-shadow remove <file>` | `remove.rs` | Unregisters with confirmation prompt |
-| `git-shadow status` | `status.rs` | Shows managed files, diff stats, warnings |
+| `git-shadow status` | `status.rs` | Shows managed files, diff stats, warnings (`--json`) |
 | `git-shadow diff [file]` | `diff.rs` | Shows shadow changes as unified diff |
 | `git-shadow rebase [file]` | `rebase.rs` | Updates baseline via 3-way merge |
 | `git-shadow restore [file]` | `restore.rs` | Recovers from interrupted commits |
 | `git-shadow suspend` | `suspend.rs` | Suspends shadow changes for branch switching |
 | `git-shadow resume` | `resume.rs` | Resumes suspended shadow changes (with 3-way merge) |
-| `git-shadow doctor` | `doctor.rs` | Diagnoses hooks, config, stale state |
+| `git-shadow doctor` | `doctor.rs` | Diagnoses hooks, config, stale state (`--json`, non-zero exit on issues) |
 | `git-shadow hook <name>` | `hook.rs` | Internal dispatcher called from hook scripts |
 
 ## Design Notes
@@ -30,7 +31,11 @@ Every command follows the same structure:
 
 ### install.rs: Hook Chaining
 
-Generated hook scripts call `git-shadow hook <name>` first, then chain to any pre-existing hook (renamed to `<hook>.pre-shadow`). This preserves existing hooks from other tools. Idempotent -- re-running `install` skips already-installed hooks. Hooks are installed to `common_dir/hooks/` so they are shared across worktrees. In a worktree, `inherit_from_main_worktree()` auto-inherits the managed file list from the main repo if no local config exists yet -- overlay baselines are regenerated from the worktree's HEAD, phantom entries are copied as-is.
+Generated hook scripts call `git-shadow hook <name>` first, then chain to any pre-existing hook (renamed to `<hook>.pre-shadow`). This preserves existing hooks from other tools. Idempotent -- re-running `install` skips already-installed hooks. Four hooks are installed (`pre-commit`, `post-commit`, `post-merge`, `post-rewrite`) into `git.effective_hooks_dir()`: it honors `core.hooksPath` when set (so hooks actually run under husky/lefthook/custom setups), otherwise `common_dir/hooks/` so they are shared across worktrees. In a worktree, `inherit_from_main_worktree()` auto-inherits the managed file list from the main repo if no local config exists yet -- overlay baselines are regenerated from the worktree's HEAD, phantom entries are copied as-is.
+
+### uninstall.rs: Reverse of install
+
+Refuses while a commit is mid-flight (stash remnant or live lock) and refuses if files are still managed (`UninstallHasEntries`) unless `--force` -- which first restores overlay baselines to the working tree (phantoms are left on disk). Removes the shadow hooks from `effective_hooks_dir()` (only those dispatching to `git-shadow hook`), restores any `<hook>.pre-shadow` backup, regenerates the shared exclude section from the *other* worktrees' configs, then deletes this worktree's `shadow_dir`.
 
 ### add.rs: Overlay vs Phantom Validation
 
@@ -64,4 +69,4 @@ The `hook` subcommand is `#[command(hide = true)]` in clap -- it doesn't appear 
 
 ### doctor.rs: Diagnostic Categories
 
-Checks are split into **issues** (red, things that are broken) and **warnings** (yellow, things that need attention). Checks include: hook existence/permissions/content, competing hook managers (Husky, pre-commit, lefthook), config integrity, stash remnants, stale locks, suspended state, and worktree initialization (`check_worktree()` warns if running in a worktree where `git-shadow install` has not been run yet).
+Checks are split into **issues** (red, things that are broken) and **warnings** (yellow, things that need attention). Any issue makes `doctor` exit non-zero (so scripts/CI can gate on it); warnings alone keep a zero exit. `--json` emits a structured, English-only report. Checks include: hook existence/permissions/content, inert hooks (installed in the default dir while `core.hooksPath` points elsewhere), competing hook managers (Husky, pre-commit, lefthook), config integrity, stash remnants, stale locks, suspended state, and worktree initialization (`check_worktree()` warns if running in a worktree where `git-shadow install` has not been run yet).

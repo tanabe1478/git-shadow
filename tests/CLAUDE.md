@@ -7,33 +7,52 @@ Integration and E2E tests. Unit tests live alongside their modules in `src/` via
 | File | Purpose |
 |------|---------|
 | `common/mod.rs` | `TestRepo` helper for creating isolated git repos |
-| `test_commit_cycle.rs` | E2E tests for the full commit lifecycle |
+| `test_commit_cycle.rs` | E2E tests for the full commit lifecycle (hook handlers driven in-process) |
 | `test_worktree.rs` | E2E tests for git worktree support |
+| `test_git_operations.rs` | E2E tests running real `git` commands against the installed hooks |
+| `test_localized_errors.rs` | E2E tests for locale-aware output, `--version`, `--json`, `uninstall` |
 
 ## TestRepo Helper
 
 `common::TestRepo` creates a temporary git repository with:
 - `git init` + user config
-- Helper methods: `create_file()`, `read_file()`, `commit()`, `init_shadow()`, `add_worktree()`
+- Helper methods: `create_file()`, `create_dir()`, `read_file()`, `commit()`, `git_dir()`, `shadow_dir()`, `init_shadow()`, `add_worktree()`
 
-Used by E2E tests to set up realistic scenarios without touching the real filesystem.
+Used by E2E tests to set up realistic scenarios without touching the real filesystem. `test_git_operations.rs` and `test_localized_errors.rs` do not use `TestRepo` -- they build their own repos and shell out to the installed `git-shadow` binary.
 
 ## E2E Tests (test_commit_cycle.rs)
 
-Three scenarios covering the core commit lifecycle:
+Five scenarios covering the core commit lifecycle:
 
 1. **`test_full_overlay_commit_cycle`**: install -> add overlay -> edit -> pre-commit -> commit -> post-commit -> verify (committed content = baseline, working tree = shadow)
 2. **`test_full_phantom_commit_cycle`**: install -> add phantom -> stage -> pre-commit -> commit -> post-commit -> verify (phantom not in commit, restored to working tree)
 3. **`test_pre_commit_rollback_on_error`**: Simulates stash remnant causing pre-commit to fail, verifies shadow content is preserved (not lost during rollback)
+4. **`test_full_phantom_directory_commit_cycle`**: phantom-directory (exclude-only) lifecycle -- verifies the directory stays local and is never committed
+5. **`test_mixed_overlay_and_phantom_directory`**: overlay and phantom directory managed together in one commit cycle
 
 ## E2E Tests (test_worktree.rs)
 
 Four scenarios covering git worktree support:
 
-1. **`test_worktree_discover`**: Creates a worktree, verifies `GitRepo::discover()` resolves correct `root`, `git_dir`, and `common_dir` paths
-2. **`test_worktree_install_shares_hooks`**: Installs hooks from a worktree, verifies hooks are written to `common_dir/hooks/` (shared with main worktree)
-3. **`test_worktree_overlay_commit_cycle`**: Full overlay commit cycle in a worktree -- install, add, edit, pre-commit, commit, post-commit -- verifying per-worktree shadow state isolation
+1. **`test_discover_in_worktree`**: Creates a worktree, verifies `GitRepo::discover()` resolves correct `root`, `git_dir`, and `common_dir` paths
+2. **`test_install_in_worktree`**: Installs hooks from a worktree, verifies hooks land in the effective (shared) hooks dir
+3. **`test_overlay_commit_cycle_in_worktree`**: Full overlay commit cycle in a worktree -- install, add, edit, pre-commit, commit, post-commit -- verifying per-worktree shadow state isolation
 4. **`test_install_inherits_config_from_main_worktree`**: Verifies that `install` in a worktree auto-inherits managed files from the main repo -- overlay baselines are regenerated from worktree HEAD, phantom entries are copied as-is
+
+## E2E Tests (test_git_operations.rs)
+
+Six scenarios that install the real hooks and run real `git` commands (the built binary is put on `PATH`):
+
+1. **`test_amend_keeps_shadow_out_of_commit_and_intact_in_worktree`**: `git commit --amend` keeps shadow out of history and intact in the working tree
+2. **`test_rebase_triggers_post_rewrite_and_preserves_shadow`**: `git rebase` fires post-rewrite and preserves shadow
+3. **`test_merge_triggers_post_merge_and_preserves_shadow`**: `git merge` fires post-merge and preserves shadow
+4. **`test_cherry_pick_does_not_leak_shadow`**: `git cherry-pick` does not leak shadow content into the picked commit
+5. **`test_pathspec_commit_isolates_shadow`**: a pathspec-limited commit still isolates shadow
+6. **`test_commit_blocked_by_live_lock_holder`**: a live lock holder blocks the commit rather than corrupting state
+
+## E2E Tests (test_localized_errors.rs)
+
+Locale-aware output and CLI-surface scenarios, including: English/Japanese error and help/status messages selected from locale env vars, `--version`, `doctor` non-zero exit on issues plus valid English `--json`, valid `status --json`, and `uninstall` removing hooks/state (and refusing with active entries).
 
 ## Testing Patterns
 

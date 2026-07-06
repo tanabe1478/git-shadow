@@ -1,6 +1,6 @@
 # src/hooks/
 
-Git hook handlers. These are called via `git-shadow hook <name>` from shell scripts installed in `.git/hooks/`.
+Git hook handlers. These are called via `git-shadow hook <name>` from shell scripts installed in the effective hooks dir (`.git/hooks/`, or `core.hooksPath` when set).
 
 ## Hook Lifecycle
 
@@ -15,6 +15,10 @@ git commit
 git pull / git merge
   -> .git/hooks/post-merge
        -> git-shadow hook post-merge    [post_merge.rs]
+
+git commit --amend / git rebase / git filter-branch
+  -> .git/hooks/post-rewrite
+       -> git-shadow hook post-rewrite  [post_rewrite.rs]
 ```
 
 ## Design Notes
@@ -48,9 +52,9 @@ On any error in step 5-6, `tx.rollback()` restores all stashed files and re-stag
 
 Reads all files from `stash/`, writes them back to the working tree, and releases the lock. Failures are logged but do not abort -- partial restoration is better than losing everything. If any file fails, the lock is kept so `restore` can retry.
 
-### post_merge.rs: Drift Detection
+### post_merge.rs / post_rewrite.rs: Clean-Only Auto-Rebase
 
-After `git pull`/`git merge`, compares stored baseline content with current HEAD content. If they differ, warns the user to run `git-shadow rebase`. This is advisory only -- no modifications are made.
+Both delegate to `rebase::auto_rebase_all(git, trigger)` (post-merge fires after `git pull`/`git merge`; post-rewrite after `git commit --amend`/`git rebase`). `auto_rebase_all` acquires the shadow lock -- if another process holds it (a commit in progress), or it is stale/corrupt, it skips with a warning rather than failing the git operation. Under the lock it 3-way-merges each overlay baseline up to the new HEAD in `RebaseMode::Auto`: clean merges update the baseline and working tree; conflicting ones are **deferred** (no conflict markers written, baseline left untouched) with a warning telling the user to run `git-shadow rebase` manually. Non-overlay entries and baselines already at HEAD are skipped.
 
 ## Critical Invariants
 

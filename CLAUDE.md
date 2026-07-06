@@ -23,7 +23,7 @@
 - **Atomic writes** -- All file mutations use tempfile + rename via `fs_util::atomic_write()` to prevent corruption.
 - **PID-based lockfile** -- Uses `libc::kill(pid, 0)` for stale lock detection.
 - **PreCommitTransaction pattern** -- The pre-commit hook tracks state for rollback on failure.
-- **Worktree awareness** -- `GitRepo::discover()` resolves `git_dir` (per-worktree) and `common_dir` (shared). Hooks and `.git/info/exclude` use `common_dir` so they are shared across worktrees. Shadow state (`config.json`, `baselines/`, `stash/`, `lock`) uses `git_dir` so each worktree is independent. Fallback discovery handles Git < 2.31 which lacks `--git-common-dir`. On `install`, if running in a worktree with no existing config, the managed file list is auto-inherited from the main repo (`inherit_from_main_worktree()`): overlay baselines are regenerated from the worktree's HEAD, phantom entries are copied as-is.
+- **Worktree awareness** -- `GitRepo::discover()` resolves `git_dir` (per-worktree) and `common_dir` (shared). Hooks are installed to the effective hooks dir (`effective_hooks_dir()`): it honors `core.hooksPath` when set (resolving relative paths against the worktree root), otherwise falls back to `common_dir/hooks` so hooks are shared across worktrees. `.git/info/exclude` uses `common_dir`. Shadow state (`config.json`, `baselines/`, `stash/`, `suspended/`, `lock`) uses `git_dir` so each worktree is independent. Fallback discovery handles Git < 2.31 which lacks `--git-common-dir`. On `install`, if running in a worktree with no existing config, the managed file list is auto-inherited from the main repo (`inherit_from_main_worktree()`): overlay baselines are regenerated from the worktree's HEAD, phantom entries are copied as-is.
 
 ### Module Structure
 
@@ -35,32 +35,37 @@ src/
   error.rs             # ShadowError (thiserror)
   config.rs            # ShadowConfig, FileEntry, FileType, ExcludeMode
   path.rs              # Path normalization + URL encoding (%25 before %2F)
-  lock.rs              # Lockfile acquire/release/stale detection
+  lock.rs              # Lockfile acquire/release/stale detection (LockStatus incl. Corrupt)
   fs_util.rs           # Atomic write, binary detection, size check
-  git.rs               # GitRepo struct (root, git_dir, common_dir, shadow_dir; hooks_dir())
+  git.rs               # GitRepo struct (root, git_dir, common_dir, shadow_dir; hooks_dir(), effective_hooks_dir())
+  ui.rs                # Locale detection (ja/en) + user-facing message/error formatting
   exclude.rs           # .git/info/exclude section management
   diff_util.rs         # Unified diff formatting (similar crate)
   merge.rs             # 3-way merge via `git merge-file -p --diff3`
   commands/
     install.rs         # Set up hooks + .git/shadow/ structure
+    uninstall.rs       # Remove hooks + shadow state (refuses with active entries unless --force)
     add.rs             # Register overlay or phantom
     remove.rs          # Unregister with confirmation prompt
-    status.rs          # Show managed files, warnings
+    status.rs          # Show managed files, warnings (--json)
     diff.rs            # Show shadow changes as unified diff
-    rebase.rs          # Update baseline with 3-way merge
+    rebase.rs          # Update baseline with 3-way merge (auto_rebase_all for hooks)
     restore.rs         # Recover from interrupted commits
     suspend.rs         # Suspend shadow changes for branch switching
     resume.rs          # Resume suspended changes (with 3-way merge)
-    doctor.rs          # Diagnose hooks, config, stale state
+    doctor.rs          # Diagnose hooks, config, stale state (--json, non-zero exit on issues)
     hook.rs            # Dispatcher for `git-shadow hook <name>`
   hooks/
     pre_commit.rs      # Stash shadow -> restore baseline -> stage
     post_commit.rs     # Restore shadow from stash -> release lock
-    post_merge.rs      # Detect baseline drift, warn user
+    post_merge.rs      # Clean-only auto-rebase of baselines under lock
+    post_rewrite.rs    # Clean-only auto-rebase after amend/rebase (shares auto_rebase_all)
 tests/
-  common/mod.rs        # TestRepo helper
-  test_commit_cycle.rs # E2E: overlay cycle, phantom cycle, rollback
-  test_worktree.rs     # E2E: worktree discovery, install, commit cycle
+  common/mod.rs           # TestRepo helper
+  test_commit_cycle.rs    # E2E: overlay/phantom/phantom-dir cycles, rollback, mixed
+  test_worktree.rs        # E2E: worktree discovery, install, commit cycle, config inheritance
+  test_git_operations.rs  # E2E: amend, rebase, merge, cherry-pick, pathspec, live-lock
+  test_localized_errors.rs # E2E: locale-aware messages, --version, --json, uninstall
 ```
 
 ### Path Encoding
@@ -84,11 +89,11 @@ cargo fmt --check               # Must pass
 ### CI
 
 GitHub Actions runs on every push to `main` and on pull requests:
-- **fmt** -- `cargo fmt --check`
-- **clippy** -- `cargo clippy -- -D warnings`
-- **test** -- `cargo test`
+- **fmt** -- `cargo fmt --check` (ubuntu)
+- **clippy** -- `cargo clippy -- -D warnings` (ubuntu)
+- **test** -- `cargo test` on an OS matrix (`ubuntu-latest`, `macos-latest`)
 
-Configuration: `.github/workflows/ci.yml`
+Configuration: `.github/workflows/ci.yml`. Releases (`.github/workflows/release.yml`) run the test job first and gate the build/publish jobs on it (`needs: test`).
 
 ### Pre-commit Hook
 
