@@ -10,6 +10,7 @@ cargo install --path .
 
 # Verify
 git-shadow --help
+git-shadow --version
 ```
 
 ## Setup
@@ -23,20 +24,44 @@ git-shadow install
 
 This creates:
 - `.git/shadow/` directory (baselines, stash, config)
-- Git hooks: `pre-commit`, `post-commit`, `post-merge`
+- Git hooks: `pre-commit`, `post-commit`, `post-merge`, `post-rewrite`
 
 If hooks already exist, they are renamed to `<hook>.pre-shadow` and chained after git-shadow's processing.
+
+> **`core.hooksPath`**: If your repository sets `core.hooksPath` (e.g., Husky, lefthook, or a custom `dev-hooks/` directory), `install` places its hooks into that effective directory so they actually run, and prints a note such as `note: core.hooksPath (.husky) is set, so hooks were installed into <path>`. `git-shadow doctor` reports an issue if hooks are installed in the default directory while `core.hooksPath` points elsewhere (they would be inert and silently skipped).
 
 > **Worktrees**: If you use `git worktree`, run `git-shadow install` separately in each worktree. If the main repo already has shadow-managed files, `install` automatically inherits the file list (overlay baselines are regenerated from the worktree's HEAD; phantom entries are copied as-is). See [git worktree Support](#git-worktree-support) for details.
 
 ## Managing Files
+
+### Adding Files
+
+`git-shadow add` accepts one or more paths and automatically chooses how to manage each one:
+
+- **Tracked files** become **overlays** (local changes layered on top of committed content).
+- **Existing untracked paths** become **phantoms** (files or directories that live only on your machine).
+
+```bash
+# Add several files at once — each is classified automatically
+git-shadow add docker-compose.yml scripts/local-setup.sh .env.local
+```
+
+If any path cannot be classified (it is neither tracked nor exists on disk), that path fails with an error and the remaining paths are still processed; the command exits non-zero when at least one path failed.
+
+**Options:**
+- `--overlay` — Force overlay registration for all given paths (the file must be tracked)
+- `--phantom` — Force phantom registration for all given paths (the path must not be tracked)
+- `--no-exclude` — Skip the `.git/info/exclude` entry (phantom only). The file will appear in `git status` as untracked but is still excluded from commits by the pre-commit hook.
+- `--force` — Ignore the 1MB overlay file size limit
+
+`--overlay` and `--phantom` are mutually exclusive.
 
 ### Overlay: Local Changes on Tracked Files
 
 Use overlays when you want to add personal content to a file that the team already tracks.
 
 ```bash
-# Register a tracked file
+# Register a tracked file (auto-detected as an overlay)
 git-shadow add docker-compose.yml
 
 # Edit freely — your changes are "shadow" changes
@@ -48,25 +73,17 @@ echo "  # my debug port override" >> docker-compose.yml
 2. The original (baseline) content is committed
 3. Your additions are restored immediately after
 
-**Options:**
-- `--force` — Skip the 1MB file size limit
-
 ### Phantom: Local-Only Files
 
 Use phantoms for files that should exist only on your machine.
 
 ```bash
-# Create and register a new local-only file
+# Create a new local-only file, then register it (auto-detected as a phantom)
 echo "#!/bin/bash" > scripts/local-setup.sh
 git-shadow add scripts/local-setup.sh
 ```
 
-By default, phantom files are added to `.git/info/exclude` to hide them from `git status`.
-
-**Options:**
-- `--overlay` — Force overlay registration for all given paths
-- `--phantom` — Force phantom registration for all given paths
-- `--no-exclude` — Skip the `.git/info/exclude` entry. The file will appear in `git status` as untracked but will still be excluded from commits by the pre-commit hook.
+By default, phantom files are added to `.git/info/exclude` to hide them from `git status`. Use `--no-exclude` to skip that entry.
 
 #### Phantom Directories
 
@@ -93,6 +110,39 @@ git-shadow remove docker-compose.yml
 
 A confirmation prompt is shown before removal. Use `--force` to skip it (required in non-interactive environments).
 
+## Uninstalling
+
+To remove git-shadow from a repository entirely:
+
+```bash
+git-shadow uninstall
+```
+
+This:
+- Removes the git-shadow hooks from the effective hooks directory (respecting `core.hooksPath`) and restores any `<hook>.pre-shadow` backups made at install time
+- Removes this worktree's entries from the managed section of `.git/info/exclude` (entries owned by other worktrees are preserved)
+- Deletes this worktree's shadow state (`.git/shadow/`)
+
+For safety, `uninstall` **refuses** to run in two situations:
+- **Files are still managed** — it stops with an error listing the count. Either `git-shadow remove <file>` each file first, or re-run with `--force`.
+- **A commit is in progress** — a leftover stash or a lock held by another live process means a commit cycle is mid-flight, so wiping state could lose work.
+
+```bash
+# Restore overlay baselines to the working tree and wipe state even if files are still managed
+git-shadow uninstall --force
+```
+
+With `--force`, overlay files are restored to their baseline content (shadow changes discarded) and the count is reported, e.g. `restored baselines to the working tree for 1 overlay(s)`. Phantom files are left on disk untouched — they are your local-only files. On success you'll see `git-shadow uninstalled (hooks, exclude entries, and state removed)`.
+
+### Manual removal
+
+If the binary is unavailable and you need to remove git-shadow by hand:
+
+1. In the effective hooks directory (`.git/hooks/`, or your `core.hooksPath`), delete the `pre-commit`, `post-commit`, `post-merge`, and `post-rewrite` scripts that call `git-shadow hook`. If a `<hook>.pre-shadow` backup exists, rename it back to `<hook>`.
+2. Restore any overlay files you want to reset to their committed content (e.g., `git restore --source=HEAD -- <file>`).
+3. Delete `.git/shadow/`.
+4. Remove the git-shadow managed section (between its marker comments) from `.git/info/exclude`.
+
 ## Viewing Status and Changes
 
 ### Status
@@ -116,6 +166,33 @@ git shadow status --git
 
 This prints `git status --short --branch` first, then the shadow-managed summary. `git-shadow` does not replace `git status` by default.
 
+For scripting, use `--json`:
+
+```bash
+git-shadow status --json
+```
+
+This emits a stable, English (non-localized) JSON document and suppresses the human-readable output. Keys are stable identifiers suitable for parsing — for example `git_state` is one of `clean`, `modified`, `staged`, or `partially_staged`, and `warnings` holds tokens such as `stash_remaining` or `stale_lock`:
+
+```json
+{
+  "suspended": false,
+  "warnings": [],
+  "files": [
+    {
+      "path": "docker-compose.yml",
+      "type": "overlay",
+      "exists": true,
+      "baseline_commit": "f5fb751...",
+      "shadow_added": 1,
+      "shadow_removed": 0,
+      "git_state": "modified",
+      "baseline_outdated": false
+    }
+  ]
+}
+```
+
 ### Diff
 
 ```bash
@@ -131,15 +208,19 @@ git-shadow diff docker-compose.yml
 
 ## Handling Upstream Changes
 
-When the team updates a file you have an overlay on (e.g., after `git pull`):
+When the team updates a file you have an overlay on (e.g., after `git pull`), the `post-merge` and `post-rewrite` hooks run automatically:
+
+- **Clean merges** — the baseline and your shadow changes are re-applied automatically (a clean-only auto-rebase). No action is needed.
+- **Conflicts** — the auto-rebase is skipped and you are warned to resolve it manually with `git-shadow rebase <file>`.
+
+If a rebase is left to you, run it explicitly:
 
 ```bash
-# post-merge hook will warn you:
-# "warning: baseline for docker-compose.yml is outdated. Run `git-shadow rebase docker-compose.yml`"
-
 # Update your baseline and re-apply shadow changes
 git-shadow rebase docker-compose.yml
 ```
+
+If the lock is held by a live process when the hook fires, the auto-rebase is skipped for safety and you can run `git-shadow rebase` yourself afterward.
 
 The rebase performs a 3-way merge:
 1. Old baseline (common ancestor)
@@ -236,6 +317,19 @@ git-shadow restore docker-compose.yml
 
 When a stale lock is found during `git commit`, git-shadow also tries safe auto-recovery first. If restoring would overwrite newer working-tree content, the commit is still blocked and manual `git-shadow restore` is required.
 
+`restore` refuses to run when the lock is held by another **live** process (a real commit or hook is in flight), so it never clobbers work another process is doing. It only cleans up locks whose owning process is gone (stale).
+
+### Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| Shadow changes get committed / hooks never run | `core.hooksPath` points somewhere other than where the hooks live, so they are inert | Re-run `git-shadow install` (it installs into the effective hooks directory). `git-shadow doctor` reports this as an issue. |
+| `git commit` blocked with "another git-shadow process still holds the lock" | Another live commit or hook is running | Wait for it to finish. If nothing is actually running, the lock is stale — run `git-shadow restore`. |
+| `git commit` blocked with "leftover files remain in `.git/shadow/stash/`" | A previous commit was interrupted | Run `git-shadow restore`, then commit again. |
+| `git-shadow restore` refuses to run | The lock is held by a live process | Let that process finish; restore only cleans up stale locks. |
+| `git-shadow resume` blocked with "was edited in the working tree while suspended" | You edited a file after suspending it, so resuming would overwrite your edits | Review the file, save what you want to keep, reconcile with `.git/shadow/suspended/`, then run `git-shadow resume` again. |
+| `git-shadow doctor` exits non-zero | It found one or more issues (broken hooks, missing baselines, inert hooks, ...) | Read the `issues:` list and address each; warnings alone do not cause a non-zero exit. |
+
 ## Diagnostics
 
 ```bash
@@ -243,10 +337,31 @@ git-shadow doctor
 ```
 
 Checks:
-- Hook files exist with correct permissions and content
+- Hook files exist with correct permissions and content, and are not inert (installed in the default directory while `core.hooksPath` points elsewhere)
 - No competing hook managers (Husky, pre-commit, lefthook)
 - Config integrity (managed files and baselines exist)
 - No stash remnants or stale locks
+- Suspended state and worktree initialization
+
+Findings are split into **issues** (red `✗`, things that are broken) and **warnings** (yellow `⚠`, things that need attention).
+
+**Exit codes:** `doctor` exits non-zero when it finds one or more issues (e.g., `Error: doctor found 4 issue(s)`), so you can gate scripts or CI on it. Warnings alone keep a zero exit code.
+
+For scripting, use `--json`:
+
+```bash
+git-shadow doctor --json
+```
+
+This emits a stable, English (non-localized) JSON document and suppresses the human-readable output. The `ok` field is `false` when there are issues (matching the non-zero exit code):
+
+```json
+{
+  "ok": true,
+  "issues": [],
+  "warnings": []
+}
+```
 
 ## Data Storage
 
@@ -357,6 +472,7 @@ With worktrees, suspend/resume is unnecessary — each worktree has independent 
 | Remove a worktree | `git worktree remove <path>` (shadow state cleaned up) |
 | Check status | `git-shadow status` / `git-shadow doctor` |
 | Branch switch (no worktree) | `git-shadow suspend` → checkout → `git-shadow resume` |
+| Remove git-shadow from a repo | `git-shadow uninstall` (or `--force`) |
 
 ## Important Notes
 

@@ -14,6 +14,7 @@ Git リポジトリ内の**ローカル限定の変更**を管理する CLI ツ�
 |------|------|-----|
 | **overlay** | 既存のトラッキング済みファイルにローカル変更を重ねる | 共有の `docker-compose.yml` に個人用デバッグ設定を追加 |
 | **phantom** | リポジトリに存在しないファイルをローカルだけで作成する | `scripts/local-setup.sh` をローカル限定で作成 |
+| **phantom dir** | ディレクトリ全体をローカル限定で管理する（exclude のみ、stash/restore なし） | ローカル限定の `.claude/` ディレクトリを常にコミット対象外にする |
 
 ## インストール
 
@@ -71,17 +72,20 @@ git show HEAD:docker-compose.yml  # クリーンなチーム用の内容のみ
 
 | コマンド | 説明 |
 |---------|------|
-| `git-shadow install` | Git hooks のセットアップ (pre-commit, post-commit, post-merge, post-rewrite) |
+| `git-shadow install` | Git hooks のセットアップ (pre-commit, post-commit, post-merge, post-rewrite)。`core.hooksPath` を尊重 |
+| `git-shadow uninstall [--force]` | hooks・exclude・state を削除。`--force` は管理対象が残っていても overlay を復元して削除 |
 | `git-shadow add <file>...` | tracked は overlay、既存の untracked path は phantom として自動登録 |
 | `git-shadow add --phantom <file>...` | ローカル限定ファイル/ディレクトリを phantom として強制登録 |
 | `git-shadow remove <file>` | shadow 管理から解除 |
-| `git-shadow status [--git]` | 管理対象ファイルの一覧と状態を表示。`--git` で `git status --short --branch` も先に表示 |
+| `git-shadow status [--git] [--json]` | 管理対象ファイルの一覧と状態を表示。`--git` で `git status --short --branch` も先に表示。`--json` はスクリプト向けの安定した英語 JSON を出力 |
 | `git-shadow diff [file]` | shadow 変更の差分を表示 |
 | `git-shadow rebase [file]` | ベースラインを更新し shadow 変更を再適用 (3-way merge) |
 | `git-shadow restore [file]` | 中断されたコミットやクラッシュからの復旧 |
 | `git-shadow suspend` | ブランチ切替のために shadow 変更を一時退避 |
 | `git-shadow resume` | 退避した shadow 変更を復元（必要に応じて 3-way merge） |
-| `git-shadow doctor` | hooks・設定の整合性・残留状態を診断 |
+| `git-shadow doctor [--json]` | hooks・設定の整合性・残留状態を診断。問題があれば非ゼロで終了。`--json` は安定した英語 JSON を出力 |
+
+`git-shadow --version` でインストール済みのバージョンを表示します。
 
 ## 仕組み
 
@@ -108,7 +112,7 @@ git show HEAD:docker-compose.yml  # クリーンなチーム用の内容のみ
 
 ## ドキュメント
 
-- [詳細な使い方ガイド](docs/usage.ja.md)
+- [詳細な使い方ガイド](docs/usage.ja.md) | [English](docs/usage.md)
 - [要件定義](docs/requirements.md)
 
 ## 動作要件
