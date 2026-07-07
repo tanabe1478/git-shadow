@@ -17,6 +17,8 @@ pub enum LockStatus {
     HeldByUs,
     HeldByOther(LockInfo),
     Stale(LockInfo),
+    /// Lockfile exists but its contents could not be parsed.
+    Corrupt,
 }
 
 /// Check current lock status
@@ -27,7 +29,12 @@ pub fn check_lock(shadow_dir: &Path) -> anyhow::Result<LockStatus> {
     }
 
     let content = std::fs::read_to_string(&lock_path).context("failed to read lockfile")?;
-    let info = parse_lock(&content)?;
+    // A lockfile we cannot parse cannot be attributed to any live process, so
+    // report it as Corrupt rather than propagating an error. Callers can then
+    // decide to reclaim it (e.g. `restore`).
+    let Ok(info) = parse_lock(&content) else {
+        return Ok(LockStatus::Corrupt);
+    };
 
     let my_pid = std::process::id();
     if info.pid == my_pid {
@@ -42,34 +49,54 @@ pub fn check_lock(shadow_dir: &Path) -> anyhow::Result<LockStatus> {
 }
 
 /// Acquire lock (write PID + timestamp). Fails if locked by another live process.
+///
+/// Acquisition is atomic: the lockfile is created with `O_CREAT | O_EXCL`
+/// (`File::create_new`) so two concurrent processes can never both succeed.
+/// If the file already exists we inspect it to classify the holder:
+/// - held by us => `Ok(())` (idempotent)
+/// - held by a live process => `Err(LockHeld)`
+/// - held by a dead process => `Err(StaleLock)`
+/// - unparseable/corrupt => `Err(CorruptLock)`, treated like a stale lock: we do
+///   NOT silently clobber it (that was the previous bug); the user reclaims it via
+///   `git-shadow restore`.
 pub fn acquire_lock(shadow_dir: &Path) -> Result<(), ShadowError> {
     let lock_path = shadow_dir.join("lock");
 
-    if lock_path.exists() {
-        let content = std::fs::read_to_string(&lock_path)?;
-        if let Ok(info) = parse_lock(&content) {
-            let my_pid = std::process::id();
-            if info.pid == my_pid {
-                return Ok(()); // Already held by us
-            }
-            if is_process_alive(info.pid) {
-                return Err(ShadowError::LockHeld {
-                    pid: info.pid,
-                    timestamp: info.timestamp.to_rfc3339(),
-                });
-            }
-            // Stale lock
-            return Err(ShadowError::StaleLock(info.pid));
+    match std::fs::File::create_new(&lock_path) {
+        Ok(mut file) => {
+            use std::io::Write;
+            let content = format!(
+                "pid={}\ntimestamp={}",
+                std::process::id(),
+                Utc::now().to_rfc3339()
+            );
+            file.write_all(content.as_bytes())?;
+            Ok(())
         }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            let content = std::fs::read_to_string(&lock_path)?;
+            match parse_lock(&content) {
+                Ok(info) => {
+                    let my_pid = std::process::id();
+                    if info.pid == my_pid {
+                        return Ok(()); // Already held by us
+                    }
+                    if is_process_alive(info.pid) {
+                        return Err(ShadowError::LockHeld {
+                            pid: info.pid,
+                            timestamp: info.timestamp.to_rfc3339(),
+                        });
+                    }
+                    // Stale lock: held by a process that no longer exists.
+                    Err(ShadowError::StaleLock(info.pid))
+                }
+                // Corrupted lock: cannot be attributed to any process. Treat it as
+                // stale but surface a clear, dedicated error instead of overwriting.
+                Err(_) => Err(ShadowError::CorruptLock),
+            }
+        }
+        Err(e) => Err(e.into()),
     }
-
-    let content = format!(
-        "pid={}\ntimestamp={}",
-        std::process::id(),
-        Utc::now().to_rfc3339()
-    );
-    std::fs::write(&lock_path, content)?;
-    Ok(())
 }
 
 /// Release lock (remove file)
@@ -118,6 +145,17 @@ mod tests {
         let shadow_dir = dir.path().join("shadow");
         std::fs::create_dir_all(&shadow_dir).unwrap();
         (dir, shadow_dir)
+    }
+
+    /// Spawn a real, signalable child process so that `is_process_alive` reports
+    /// it as live. (Using PID 1 is unreliable: on macOS `kill(1, 0)` returns
+    /// EPERM, which our existence check treats as "not alive".) Caller must kill
+    /// the returned child.
+    fn spawn_live_process() -> std::process::Child {
+        std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .expect("failed to spawn helper process")
     }
 
     #[test]
@@ -183,12 +221,64 @@ mod tests {
     #[test]
     fn test_acquire_lock_fails_on_live_other_process() {
         let (_dir, shadow_dir) = make_shadow_dir();
-        // Write a lock with PID 1 (init/launchd - always alive)
+        let mut child = spawn_live_process();
         let lock_path = shadow_dir.join("lock");
-        let content = format!("pid=1\ntimestamp={}", Utc::now().to_rfc3339());
+        let content = format!("pid={}\ntimestamp={}", child.id(), Utc::now().to_rfc3339());
         std::fs::write(&lock_path, content).unwrap();
 
         let result = acquire_lock(&shadow_dir);
+        let is_held = matches!(result, Err(ShadowError::LockHeld { .. }));
+        let _ = child.kill();
+        let _ = child.wait();
+        assert!(is_held, "expected LockHeld for a live process");
+    }
+
+    #[test]
+    fn test_acquire_lock_reports_stale_on_dead_process() {
+        let (_dir, shadow_dir) = make_shadow_dir();
+        let lock_path = shadow_dir.join("lock");
+        let content = format!("pid=999999\ntimestamp={}", Utc::now().to_rfc3339());
+        std::fs::write(&lock_path, content).unwrap();
+
+        let result = acquire_lock(&shadow_dir);
+        assert!(matches!(result, Err(ShadowError::StaleLock(999999))));
+    }
+
+    #[test]
+    fn test_acquire_lock_is_atomic_second_acquire_by_other_fails() {
+        // Simulate a lock already held by another live process, then verify a
+        // fresh acquisition does not overwrite it (atomic create_new).
+        let (_dir, shadow_dir) = make_shadow_dir();
+        let mut child = spawn_live_process();
+        let lock_path = shadow_dir.join("lock");
+        let existing = format!("pid={}\ntimestamp={}", child.id(), Utc::now().to_rfc3339());
+        std::fs::write(&lock_path, &existing).unwrap();
+
+        let result = acquire_lock(&shadow_dir);
+        // The original lock content must be untouched.
+        let after = std::fs::read_to_string(&lock_path).unwrap();
+        let _ = child.kill();
+        let _ = child.wait();
         assert!(result.is_err());
+        assert_eq!(after, existing);
+    }
+
+    #[test]
+    fn test_corrupt_lock_reported_by_check_and_acquire() {
+        let (_dir, shadow_dir) = make_shadow_dir();
+        let lock_path = shadow_dir.join("lock");
+        // Garbage that parse_lock cannot interpret (no pid field).
+        std::fs::write(&lock_path, "this is not a valid lockfile").unwrap();
+
+        assert!(matches!(
+            check_lock(&shadow_dir).unwrap(),
+            LockStatus::Corrupt
+        ));
+        assert!(matches!(
+            acquire_lock(&shadow_dir),
+            Err(ShadowError::CorruptLock)
+        ));
+        // Corrupt lock is not silently clobbered.
+        assert!(lock_path.exists());
     }
 }

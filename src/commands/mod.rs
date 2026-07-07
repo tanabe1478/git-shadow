@@ -9,3 +9,4 @@ pub mod restore;
 pub mod resume;
 pub mod status;
 pub mod suspend;
+pub mod uninstall;

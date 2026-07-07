@@ -10,6 +10,7 @@ cargo install --path .
 
 # 確認
 git-shadow --help
+git-shadow --version
 ```
 
 ## セットアップ
@@ -23,20 +24,44 @@ git-shadow install
 
 以下が作成されます:
 - `.git/shadow/` ディレクトリ (baselines, stash, config)
-- Git hooks: `pre-commit`, `post-commit`, `post-merge`
+- Git hooks: `pre-commit`, `post-commit`, `post-merge`, `post-rewrite`
 
 既存の hook がある場合は `<hook>.pre-shadow` にリネームされ、git-shadow の処理後にチェーン実行されます。
+
+> **`core.hooksPath`**: リポジトリで `core.hooksPath`（Husky、lefthook、独自の `dev-hooks/` など）が設定されている場合、`install` は hooks を実際に発火する有効なディレクトリに配置し、`note: core.hooksPath (.husky) is set, so hooks were installed into <path>` のようなメッセージを表示します。既定のディレクトリに hooks があるのに `core.hooksPath` が別を指している（＝発火せず黙って無視される）場合、`git-shadow doctor` が issue として報告します。
 
 > **worktree**: `git worktree` を使用している場合は、各ワークツリーで `git-shadow install` を個別に実行してください。メインリポジトリに shadow 管理対象ファイルがある場合、`install` 時に自動的にファイルリストが継承されます（overlay のベースラインはワークツリーの HEAD から再生成、phantom エントリはそのままコピー）。詳細は [git worktree 対応](#git-worktree-対応) を参照してください。
 
 ## ファイルの管理
+
+### ファイルの追加
+
+`git-shadow add` は 1 つ以上のパスを受け取り、それぞれの管理方法を自動で判定します:
+
+- **トラッキング済みファイル** は **overlay**（コミット済み内容に重ねるローカル変更）になります。
+- **既存の未追跡パス** は **phantom**（自分のマシンだけに存在するファイルまたはディレクトリ）になります。
+
+```bash
+# 複数のファイルを一度に追加 — それぞれ自動で判定される
+git-shadow add docker-compose.yml scripts/local-setup.sh .env.local
+```
+
+判定できないパス（トラッキングされておらず、ディスク上にも存在しない）があった場合、そのパスはエラーになり、残りのパスは処理が続行されます。1 つでも失敗すると、コマンドは非ゼロで終了します。
+
+**オプション:**
+- `--overlay` — 指定したパスをすべて overlay として強制登録（ファイルはトラッキング済みである必要があります）
+- `--phantom` — 指定したパスをすべて phantom として強制登録（パスはトラッキングされていない必要があります）
+- `--no-exclude` — `.git/info/exclude` への追加をスキップ（phantom のみ）。`git status` には未追跡ファイルとして表示されますが、pre-commit hook によりコミットからは除外されます。
+- `--force` — overlay の 1MB ファイルサイズ上限を無視
+
+`--overlay` と `--phantom` は同時に指定できません。
 
 ### Overlay: トラッキング済みファイルへのローカル変更
 
 チームが既にトラッキングしているファイルに個人的な内容を追記したい場合に使います。
 
 ```bash
-# トラッキング済みファイルを登録
+# トラッキング済みファイルを登録（overlay として自動判定）
 git-shadow add docker-compose.yml
 
 # 自由に編集 — あなたの変更は「shadow 変更」になる
@@ -48,25 +73,17 @@ echo "  # 個人用デバッグポート" >> docker-compose.yml
 2. 元の内容（ベースライン）がコミットされる
 3. コミット直後にあなたの追記が復元される
 
-**オプション:**
-- `--force` — 1MB のファイルサイズ上限をスキップ
-
 ### Phantom: ローカル限定ファイル
 
 自分のマシンだけに存在するファイルを管理したい場合に使います。
 
 ```bash
-# 新しいローカル限定ファイルを作成して登録
+# 新しいローカル限定ファイルを作成して登録（phantom として自動判定）
 echo "#!/bin/bash" > scripts/local-setup.sh
 git-shadow add scripts/local-setup.sh
 ```
 
-デフォルトでは `.git/info/exclude` に追加され、`git status` に表示されなくなります。
-
-**オプション:**
-- `--overlay` — 指定したパスをすべて overlay として強制登録
-- `--phantom` — 指定したパスをすべて phantom として強制登録
-- `--no-exclude` — `.git/info/exclude` への追加をスキップ。`git status` には未追跡ファイルとして表示されますが、pre-commit hook によりコミットからは除外されます。
+デフォルトでは `.git/info/exclude` に追加され、`git status` に表示されなくなります。`--no-exclude` でこの追加をスキップできます。
 
 #### Phantom ディレクトリ
 
@@ -93,6 +110,39 @@ git-shadow remove docker-compose.yml
 
 解除前に確認プロンプトが表示されます。`--force` でスキップできます（非対話環境では必須）。
 
+## アンインストール
+
+リポジトリから git-shadow を完全に削除するには:
+
+```bash
+git-shadow uninstall
+```
+
+以下の処理が行われます:
+- 有効な hooks ディレクトリ（`core.hooksPath` を尊重）から git-shadow の hooks を削除し、install 時に退避した `<hook>.pre-shadow` backup を復元します
+- このワークツリーが所有する `.git/info/exclude` の管理セクションのエントリを削除します（他のワークツリーが所有するエントリは保持されます）
+- このワークツリーの shadow state（`.git/shadow/`）を削除します
+
+安全のため、`uninstall` は次の 2 つの状況では実行を**拒否**します:
+- **管理対象ファイルが残っている** — 件数を示すエラーで停止します。`git-shadow remove <file>` で個別に解除するか、`--force` を付けて再実行してください。
+- **コミットが進行中** — stash の残骸や、別の live プロセスが保持している lock があると、commit サイクルが進行中と判断され、state を消すと作業を失う可能性があります。
+
+```bash
+# 管理対象が残っていても overlay を復元して state を削除する
+git-shadow uninstall --force
+```
+
+`--force` を付けると、overlay ファイルはベースラインの内容に復元され（shadow 変更は破棄）、件数が `restored baselines to the working tree for 1 overlay(s)` のように報告されます。phantom ファイルはあなたのローカル限定ファイルなので、ディスク上でそのまま残されます。成功時には `git-shadow uninstalled (hooks, exclude entries, and state removed)` と表示されます。
+
+### 手動での削除
+
+バイナリが使えず、手作業で git-shadow を削除する必要がある場合:
+
+1. 有効な hooks ディレクトリ（`.git/hooks/` または `core.hooksPath`）で、`git-shadow hook` を呼び出す `pre-commit`・`post-commit`・`post-merge`・`post-rewrite` スクリプトを削除します。`<hook>.pre-shadow` backup があれば `<hook>` に戻します。
+2. コミット済み内容に戻したい overlay ファイルを復元します（例: `git restore --source=HEAD -- <file>`）。
+3. `.git/shadow/` を削除します。
+4. `.git/info/exclude` から git-shadow の管理セクション（マーカーコメントで囲まれた範囲）を削除します。
+
 ## 状態の確認と差分表示
 
 ### Status
@@ -116,6 +166,33 @@ git shadow status --git
 
 `git status --short --branch` を先に表示し、その後に shadow 管理対象の意味づけを表示します。デフォルトでは `git status` 自体は置き換えません。
 
+スクリプトで使う場合は `--json` を指定します:
+
+```bash
+git-shadow status --json
+```
+
+安定した英語（非ローカライズ）の JSON を出力し、人間向けの出力は抑制されます。キーはパース向けの安定した識別子です。例えば `git_state` は `clean`・`modified`・`staged`・`partially_staged` のいずれか、`warnings` には `stash_remaining` や `stale_lock` などのトークンが入ります:
+
+```json
+{
+  "suspended": false,
+  "warnings": [],
+  "files": [
+    {
+      "path": "docker-compose.yml",
+      "type": "overlay",
+      "exists": true,
+      "baseline_commit": "f5fb751...",
+      "shadow_added": 1,
+      "shadow_removed": 0,
+      "git_state": "modified",
+      "baseline_outdated": false
+    }
+  ]
+}
+```
+
 ### Diff
 
 ```bash
@@ -131,15 +208,19 @@ git-shadow diff docker-compose.yml
 
 ## アップストリームの変更への対応
 
-overlay をかけているファイルがチームによって更新された場合（`git pull` 後など）:
+overlay をかけているファイルがチームによって更新された場合（`git pull` 後など）、`post-merge` と `post-rewrite` hook が自動的に実行されます:
+
+- **クリーンなマージ** — ベースラインと shadow 変更が自動的に再適用されます（クリーン時限定の自動 rebase）。操作は不要です。
+- **コンフリクト** — 自動 rebase はスキップされ、`git-shadow rebase <file>` で手動解決するよう警告されます。
+
+手動 rebase が必要な場合は明示的に実行します:
 
 ```bash
-# post-merge hook が警告を表示:
-# "warning: baseline for docker-compose.yml is outdated. Run `git-shadow rebase docker-compose.yml`"
-
 # ベースラインを更新し shadow 変更を再適用
 git-shadow rebase docker-compose.yml
 ```
+
+hook 実行時に別の live プロセスが lock を保持している場合、安全のため自動 rebase はスキップされます。後から自分で `git-shadow rebase` を実行してください。
 
 rebase は 3-way merge を実行します:
 1. 旧ベースライン（共通祖先）
@@ -236,6 +317,19 @@ git-shadow restore docker-compose.yml
 
 `git commit` 中に stale lock が見つかった場合も、作業ツリーを安全に復元できると判断できるときは自動回復を試みます。新しい内容を上書きする恐れがある場合だけ、従来どおり手動 `git-shadow restore` が必要です。
 
+`restore` は、別の **live** プロセスが lock を保持している場合（実際の commit や hook が進行中の場合）は実行を拒否するため、他のプロセスの作業を上書きすることはありません。所有プロセスが既に存在しない（stale な）lock だけをクリーンアップします。
+
+### トラブルシューティング
+
+| 症状 | 原因 | 対処 |
+|------|------|------|
+| shadow 変更がコミットされる / hooks が実行されない | `core.hooksPath` が hooks の場所とは別を指しており、hooks が発火しない | `git-shadow install` を再実行する（有効な hooks ディレクトリにインストールされます）。`git-shadow doctor` が issue として報告します。 |
+| `git commit` が "another git-shadow process still holds the lock" でブロックされる | 別の live な commit / hook が実行中 | 終わるまで待つ。実際には何も動いていないなら lock は stale なので `git-shadow restore` を実行する。 |
+| `git commit` が "leftover files remain in `.git/shadow/stash/`" でブロックされる | 前回の commit が中断された | `git-shadow restore` を実行してから、もう一度 commit する。 |
+| `git-shadow restore` が実行を拒否する | live プロセスが lock を保持している | そのプロセスの終了を待つ。restore は stale な lock だけを片付けます。 |
+| `git-shadow resume` が "was edited in the working tree while suspended" でブロックされる | suspend 後にファイルを編集したため、resume すると編集が上書きされる | ファイルを確認し、残したい内容を退避し、`.git/shadow/suspended/` の内容と統合してから、もう一度 `git-shadow resume` を実行する。 |
+| `git-shadow doctor` が非ゼロで終了する | 1 件以上の issue を検出した（壊れた hooks、baseline の欠落、inert な hooks など） | `issues:` のリストを読み、それぞれ対処する。warning だけなら非ゼロにはなりません。 |
+
 ## 診断
 
 ```bash
@@ -243,10 +337,31 @@ git-shadow doctor
 ```
 
 チェック項目:
-- Hook ファイルの存在、実行権限、内容
+- Hook ファイルの存在、実行権限、内容、および inert でないこと（既定のディレクトリに hooks があるのに `core.hooksPath` が別を指していないか）
 - 競合する hook マネージャーの検出 (Husky, pre-commit, lefthook)
 - config の整合性（管理対象ファイルとベースラインの存在確認）
 - stash 残留や stale lock の有無
+- suspend 状態、worktree の初期化
+
+検出結果は **issues**（赤 `✗`、壊れているもの）と **warnings**（黄 `⚠`、注意が必要なもの）に分かれます。
+
+**終了コード:** `doctor` は 1 件以上の issue を検出すると非ゼロで終了します（例: `Error: doctor found 4 issue(s)`）。これによりスクリプトや CI で判定に使えます。warning だけの場合は終了コード 0 のままです。
+
+スクリプトで使う場合は `--json` を指定します:
+
+```bash
+git-shadow doctor --json
+```
+
+安定した英語（非ローカライズ）の JSON を出力し、人間向けの出力は抑制されます。`ok` フィールドは issue がある場合に `false` になります（非ゼロの終了コードと一致します）:
+
+```json
+{
+  "ok": true,
+  "issues": [],
+  "warnings": []
+}
+```
 
 ## データ保存先
 
@@ -357,6 +472,7 @@ worktree を使う場合、suspend/resume は不要です（各 worktree が独�
 | worktree を削除 | `git worktree remove <path>`（shadow 状態も消える） |
 | 状態を確認 | `git-shadow status` / `git-shadow doctor` |
 | ブランチ切替（worktree なし） | `git-shadow suspend` → checkout → `git-shadow resume` |
+| リポジトリから git-shadow を削除 | `git-shadow uninstall`（または `--force`） |
 
 ## 注意事項
 

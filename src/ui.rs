@@ -124,6 +124,41 @@ pub fn install_success(locale: UiLocale) -> &'static str {
     )
 }
 
+pub fn install_custom_hooks_path(locale: UiLocale, hooks_path: &str, resolved: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!(
+            "note: core.hooksPath ({hooks_path}) が設定されているため、hooks を {resolved} にインストールしました"
+        ),
+        UiLocale::En => format!(
+            "note: core.hooksPath ({hooks_path}) is set, so hooks were installed into {resolved}"
+        ),
+    }
+}
+
+pub fn uninstall_success(locale: UiLocale) -> &'static str {
+    choose(
+        locale,
+        "git-shadow を uninstall しました (hooks・exclude・state を削除しました)",
+        "git-shadow uninstalled (hooks, exclude entries, and state removed)",
+    )
+}
+
+pub fn uninstall_hook_restored(locale: UiLocale, hook: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!("{hook} hook の pre-shadow backup を復元しました"),
+        UiLocale::En => format!("restored pre-shadow backup for {hook} hook"),
+    }
+}
+
+pub fn uninstall_forced_overlays(locale: UiLocale, count: usize) -> String {
+    match locale {
+        UiLocale::Ja => {
+            format!("{count} 件の overlay の baseline を working tree に復元しました")
+        }
+        UiLocale::En => format!("restored baselines to the working tree for {count} overlay(s)"),
+    }
+}
+
 pub fn inherited_from_main_worktree(locale: UiLocale, count: usize) -> String {
     match locale {
         UiLocale::Ja => format!("main worktree から {count} 件のファイル設定を引き継ぎました"),
@@ -354,6 +389,17 @@ pub fn auto_rebase_conflict_warning(locale: UiLocale, path: &str) -> String {
     }
 }
 
+pub fn auto_rebase_skipped_locked(locale: UiLocale, trigger: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!(
+            "warning: {trigger} の自動 rebase をスキップしました (別の git-shadow 処理が lock を保持しています)。必要なら後で `git-shadow rebase` を実行してください"
+        ),
+        UiLocale::En => format!(
+            "warning: skipped {trigger} auto-rebase because another git-shadow process holds the lock. Run `git-shadow rebase` later if needed"
+        ),
+    }
+}
+
 pub fn auto_rebase_failed(locale: UiLocale, path: &str, trigger: &str, error: &str) -> String {
     match locale {
         UiLocale::Ja => {
@@ -376,6 +422,17 @@ pub fn post_commit_read_stash_failed(locale: UiLocale, path: &str, error: &str) 
     match locale {
         UiLocale::Ja => format!("warning: {path} の stash 読み込みに失敗しました: {error}"),
         UiLocale::En => format!("warning: failed to read stash for {path}: {error}"),
+    }
+}
+
+pub fn post_commit_restore_conflict(locale: UiLocale, path: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!(
+            "warning: {path} は commit 後に編集されているため上書きしませんでした。`git-shadow restore` で確認してください"
+        ),
+        UiLocale::En => format!(
+            "warning: {path} was edited after the commit, so it was left untouched. Run `git-shadow restore` to review"
+        ),
     }
 }
 
@@ -414,6 +471,17 @@ pub fn doctor_hook_not_executable(locale: UiLocale, hook: &str) -> String {
     match locale {
         UiLocale::Ja => format!("{hook} hook に実行権限がありません"),
         UiLocale::En => format!("{hook} hook is not executable"),
+    }
+}
+
+pub fn doctor_hooks_inert(locale: UiLocale, hooks_path: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!(
+            "hooks は既定の hooks dir にありますが core.hooksPath ({hooks_path}) が別を指しているため実行されません。`git-shadow install` を再実行してください"
+        ),
+        UiLocale::En => format!(
+            "hooks are installed in the default hooks dir but core.hooksPath ({hooks_path}) points elsewhere, so they never run. Re-run `git-shadow install`"
+        ),
     }
 }
 
@@ -794,12 +862,29 @@ fn format_shadow_error_ja(err: &ShadowError) -> String {
              2. `git status` を確認する\n\
              3. もう一度 `git commit` する"
         ),
+        ShadowError::CorruptLock => "\
+コミットを止めました: lockfile が壊れています (内容を解釈できません)。\n\
+対処:\n\
+1. `git-shadow restore` を実行して lock を片付ける\n\
+2. `git status` を確認する\n\
+3. もう一度 `git commit` する"
+            .to_string(),
+        ShadowError::MergeFailed(stderr) => {
+            format!("エラー: 3-way merge に失敗しました:\n{stderr}")
+        }
         ShadowError::AutoRestoreConflict(file) => format!(
             "コミットを止めました: stale lock の自動回復で `{file}` を上書きする可能性があります。\n\
              対処:\n\
              1. `{file}` の作業内容を確認する\n\
              2. 必要なら退避してから `git-shadow restore` を実行する\n\
              3. その後で `git commit` をやり直す"
+        ),
+        ShadowError::ResumeEditConflict(file) => format!(
+            "resume を止めました: suspend 中に編集された `{file}` を上書きする可能性があります。\n\
+             対処:\n\
+             1. `{file}` の現在内容を確認する\n\
+             2. 残したい内容を退避する\n\
+             3. `.git/shadow/suspended/` の内容と統合してから再度 `git-shadow resume` を実行する"
         ),
         ShadowError::NotInitialized => "\
 エラー: git-shadow がまだ初期化されていません。\n\
@@ -819,6 +904,15 @@ fn format_shadow_error_ja(err: &ShadowError) -> String {
         ShadowError::HooksNotInstalled => {
             "エラー: hooks が未インストールです。`git-shadow install` を実行してください"
                 .to_string()
+        }
+        ShadowError::UninstallHasEntries(count) => format!(
+            "エラー: {count} 件のファイルがまだ git-shadow の管理対象です。\n\
+             対処:\n\
+             1. `git-shadow remove <file>` で個別に解除する\n\
+             2. または `git-shadow uninstall --force` で overlay を復元して state を削除する"
+        ),
+        ShadowError::DoctorFoundIssues(count) => {
+            format!("エラー: doctor が {count} 件の問題を検出しました")
         }
         ShadowError::NonInteractiveWithoutForce => {
             "エラー: 非対話モードでは `--force` が必要です".to_string()
@@ -909,12 +1003,29 @@ What to do:\n\
              2. Check `git status`\n\
              3. Run `git commit` again"
         ),
+        ShadowError::CorruptLock => "\
+Commit blocked: the lockfile is corrupted (its contents could not be parsed).\n\
+What to do:\n\
+1. Run `git-shadow restore`\n\
+2. Check `git status`\n\
+3. Run `git commit` again"
+            .to_string(),
+        ShadowError::MergeFailed(stderr) => {
+            format!("Error: 3-way merge failed:\n{stderr}")
+        }
         ShadowError::AutoRestoreConflict(file) => format!(
             "Commit blocked: automatic stale-lock recovery would overwrite newer working tree content in `{file}`.\n\
              What to do:\n\
              1. Review the current contents of `{file}`\n\
              2. Save anything you need, then run `git-shadow restore`\n\
              3. Run `git commit` again"
+        ),
+        ShadowError::ResumeEditConflict(file) => format!(
+            "Resume blocked: `{file}` was edited in the working tree while suspended, and resume would overwrite it.\n\
+             What to do:\n\
+             1. Review the current contents of `{file}`\n\
+             2. Save anything you want to keep\n\
+             3. Reconcile with `.git/shadow/suspended/`, then run `git-shadow resume` again"
         ),
         ShadowError::NotInitialized => "\
 Error: git-shadow is not initialized yet.\n\
@@ -931,6 +1042,15 @@ What to do:\n\
         ShadowError::NotSuspended => "Error: shadow changes are not suspended".to_string(),
         ShadowError::HooksNotInstalled => {
             "Error: hooks not installed. Run `git-shadow install`".to_string()
+        }
+        ShadowError::UninstallHasEntries(count) => format!(
+            "Error: {count} file(s) are still managed by git-shadow.\n\
+             What to do:\n\
+             1. Run `git-shadow remove <file>` for each file\n\
+             2. Or run `git-shadow uninstall --force` to restore overlays and wipe state"
+        ),
+        ShadowError::DoctorFoundIssues(count) => {
+            format!("Error: doctor found {count} issue(s)")
         }
         ShadowError::NonInteractiveWithoutForce => {
             "Error: `--force` is required in non-interactive mode".to_string()

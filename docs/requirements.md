@@ -1,4 +1,4 @@
-# git-shadow 要件定義 v4
+# git-shadow 要件定義 v5
 
 ## 概要
 
@@ -51,11 +51,13 @@ Rust（シングルバイナリ配布）
 
 ### `git-shadow install`
 
-Git hooks（pre-commit, post-commit, post-merge）をセットアップする。
+Git hooks（pre-commit, post-commit, post-merge, post-rewrite）をセットアップする。
 
 ```bash
 git-shadow install
 ```
+
+`core.hooksPath` が設定されている場合（Husky, lefthook, 独自の `dev-hooks/` 等）、既定の `common_dir/hooks/` ではなく、その有効なディレクトリに hooks を配置する。既定のディレクトリに置くと発火しないためである。
 
 #### 既存 hook との共存
 
@@ -83,14 +85,31 @@ fi
 
 既存 hook が失敗（非ゼロ exit）した場合、commit は中断され post-commit が走らない。この場合も stash/lock が残るため、`git-shadow restore` で復旧できる。
 
+### `git-shadow uninstall`
+
+git-shadow の hooks・exclude エントリ・state を削除する。
+
+```bash
+git-shadow uninstall
+git-shadow uninstall --force
+```
+
+- 有効な hooks ディレクトリ（`core.hooksPath` を尊重）から git-shadow の hooks を削除し、install 時に退避した `<hook>.pre-shadow` backup を復元する。
+- `.git/info/exclude` の管理セクションを、このワークツリー以外のワークツリーの config の和集合から再生成する（他ワークツリーが依存するエントリは保持し、このワークツリー固有のエントリだけを削除する）。
+- このワークツリーの shadow state（`git_dir` 配下の `.git/shadow/`）を削除する。
+- 安全のため、次の場合は実行を拒否する:
+  - 管理対象ファイルが残っている場合（件数を示すエラーで停止する）。`--force` を指定すると overlay をベースラインに復元してから state を削除する（phantom ファイルはディスク上に残す）。
+  - commit が進行中の場合（stash 残骸、または別の live プロセスが lock を保持）。この場合は `--force` の有無に関わらず拒否する。
+
 ### `git-shadow hook <hook-name>`
 
-hook から呼び出される内部サブコマンド。pre-commit / post-commit / post-merge の各処理を実行する。hook ファイルから呼ばれることを前提とし、ユーザーが直接実行することは想定しない。
+hook から呼び出される内部サブコマンド。pre-commit / post-commit / post-merge / post-rewrite の各処理を実行する。hook ファイルから呼ばれることを前提とし、ユーザーが直接実行することは想定しない。
 
 ```bash
 git-shadow hook pre-commit
 git-shadow hook post-commit
 git-shadow hook post-merge
+git-shadow hook post-rewrite
 ```
 
 ### `git-shadow doctor`
@@ -106,10 +125,14 @@ git-shadow doctor
 - hook ファイルが存在するか
 - hook ファイルに実行権限があるか
 - hook ファイルの内容が `git-shadow hook` を呼び出しているか
+- hooks が inert でないか（既定の hooks ディレクトリに hooks があるのに `core.hooksPath` が別を指しており発火しない状態を検出する）
 - 他の hook マネージャー（Husky, pre-commit, lefthook 等）との競合がないか
 - config.json の整合性（管理対象ファイルが存在するか等）
 - stash に残留ファイルがないか（残留している場合は「前回の commit が途中で中断された可能性があります。`git-shadow restore` を実行してください」と案内する）
 - lockfile が残っていないか（残っている場合は PID を確認し、プロセスが存在しなければ stale lock として `git-shadow restore` を案内する）
+- suspend 状態か、また worktree 環境で未初期化でないか
+
+診断結果は issues（壊れているもの）と warnings（注意が必要なもの）に分ける。**issue が 1 件以上ある場合は非ゼロの exit code で終了する**（スクリプトや CI で判定に使える）。warning のみの場合は exit code 0 とする。`--json` フラグを指定すると、ロケールに関わらず安定した英語の JSON（`ok`, `issues`, `warnings`）を出力し、人間向け出力は抑制する。
 
 ### `git-shadow add <file>`
 
@@ -219,6 +242,11 @@ git-shadow status
 | ベースラインのコミットがずれている | `baseline_commit` と HEAD の比較 |
 | phantom の `--no-exclude` 運用で `git status` に表示されている | `exclude_mode` が `none` の phantom がある |
 
+#### `--git` / `--json` フラグ
+
+- `--git`: shadow のサマリの前に `git status --short --branch` を表示する（opt-in の統合表示）。デフォルトでは `git status` を置き換えない。
+- `--json`: ロケールに関わらず安定した英語の JSON を出力し、人間向け出力は抑制する。`git_state` は `clean` / `modified` / `staged` / `partially_staged`、`warnings` は `stash_remaining` / `stale_lock` 等の安定したトークンを使う。
+
 ### `git-shadow diff [file]`
 
 shadow 変更の差分を表示する。
@@ -270,6 +298,37 @@ git-shadow restore CLAUDE.md
 - pre-commit は成功したが commit 自体が不成立だった場合（commit-msg での中断、エディタを閉じた中断等）
 - 既存 hook のチェーン実行が失敗して commit が中断された場合
 - `git stash` や `git checkout` で shadow 変更が失われた場合（stash に前回退避分が残っていれば復元できる）
+- `restore` は別の live プロセスが lock を保持している場合は実行を拒否し、進行中の作業を上書きしない。所有プロセスが存在しない（stale な）lock だけをクリーンアップする。
+
+### `git-shadow suspend`
+
+ブランチ切り替えのために shadow 変更を一時退避する。overlay の変更はワーキングツリーを変更するため `git checkout` を妨げることがあり、それをクリーンにするためのコマンド。
+
+```bash
+git-shadow suspend
+```
+
+処理フロー:
+
+1. 各 overlay のワーキングツリー内容を `.git/shadow/suspended/`（commit サイクル用の `stash/` とは別）に保存し、ベースラインをワーキングツリーに復元する。
+2. 各 phantom（ディレクトリ以外）のファイルを `suspended/` に保存し、ワーキングツリーから削除する。
+3. `config.suspended = true` にする。
+4. ガード: すでに suspend 済み、lock 保持中、stash 残骸がある場合は拒否する。処理の途中で失敗した場合はロールバックする（部分的な退避状態を残さない）。
+
+### `git-shadow resume`
+
+suspend した shadow 変更を復元する。
+
+```bash
+git-shadow resume
+```
+
+処理フロー:
+
+1. ベースラインが変わっていなければ、退避内容をそのまま復元する。
+2. ベースラインが変わっている（別ブランチ等）場合は 3-way merge（旧ベースライン / 退避内容 / 現在の HEAD）で再適用し、コンフリクト時はマーカーを書き込んで手動解決を促す。
+3. suspend 中にワーキングツリーで編集されたファイルは、上書きを避けるため resume を拒否する（`.git/shadow/suspended/` の内容と統合してから再実行する）。
+4. `suspended/` をクリーンアップし、`config.suspended = false` にする。
 
 ## 内部データ構造
 
@@ -283,7 +342,9 @@ git-shadow restore CLAUDE.md
 ├── lock                 # 実行中フラグ（lockfile、PID とタイムスタンプを記録）
 ├── baselines/           # overlay 対象のベースライン（HEAD の内容のスナップショット）
 │   └── <url_encoded_path>
-└── stash/               # pre-commit 時の退避先
+├── stash/               # pre-commit 時の退避先
+│   └── <url_encoded_path>
+└── suspended/           # suspend 時の退避先（ブランチ切り替え用、stash とは別）
     └── <url_encoded_path>
 ```
 
@@ -293,8 +354,8 @@ git worktree を使用する場合、Git ディレクトリは `git_dir`（ワ�
 
 | 用途 | 参照先 | 理由 |
 |------|--------|------|
-| shadow 状態（`config.json`, `baselines/`, `stash/`, `lock`） | `git_dir` 配下 | ワーキングツリーごとに独立した状態を持つ |
-| hooks（`pre-commit`, `post-commit`, `post-merge`） | `common_dir/hooks/` | すべてのワーキングツリーで共有する |
+| shadow 状態（`config.json`, `baselines/`, `stash/`, `suspended/`, `lock`） | `git_dir` 配下 | ワーキングツリーごとに独立した状態を持つ |
+| hooks（`pre-commit`, `post-commit`, `post-merge`, `post-rewrite`） | `common_dir/hooks/`（`core.hooksPath` が設定されていればそちら） | すべてのワーキングツリーで共有する |
 | `.git/info/exclude`（phantom の除外設定） | `common_dir/info/exclude` | すべてのワーキングツリーで共有する |
 
 `GitRepo::discover()` は `git rev-parse --path-format=absolute --show-toplevel --git-dir --git-common-dir` で3つのパスを取得する。`--git-common-dir` は Git 2.5.0（2015年）で導入、`--path-format=absolute` は Git 2.31.0（2021年）で導入された。Git 2.31 未満では `--path-format=absolute` がサポートされないため、フォールバック処理で相対パスを手動解決する。`--git-common-dir` も使えない場合は `git_dir` を `common_dir` として扱う（通常リポジトリと同等の動作）。
@@ -393,19 +454,21 @@ git worktree を使用する場合、Git ディレクトリは `git_dir`（ワ�
     - 失敗したファイルの一覧を表示し、git-shadow restore の実行を案内する
 ```
 
-### post-merge
+### post-merge / post-rewrite
 
-`git pull` や `git merge` の直後に実行される。ベースラインのずれを検出する。
+`git pull` / `git merge`（post-merge）や `git commit --amend` / `git rebase`（post-rewrite）の直後に実行される。ベースラインのずれを検出し、**クリーン時限定の自動 rebase** を行う。
 
 ```
 overlay ファイルごとに:
   1. config.json の baseline_commit と現在の HEAD を比較する
-  2. 対象ファイルの HEAD の内容がベースラインと異なっていれば警告を表示する:
-     "⚠ CLAUDE.md のベースラインが古くなっています。
-      git-shadow rebase CLAUDE.md を実行してください"
+  2. 対象ファイルの HEAD の内容がベースラインと異なっていれば、3-way merge で
+     新ベースラインに shadow 変更を再適用する（auto_rebase）
+  3. クリーンにマージできた場合はベースラインと shadow 変更を自動更新する
+  4. コンフリクトが発生した場合は自動 rebase をスキップし、
+     "git-shadow rebase <file> を実行してください" と警告する
 ```
 
-自動 rebase は行わない。ユーザーが明示的に `git-shadow rebase` を実行する。
+自動 rebase はコンフリクトが起きない場合に限る。コンフリクトする場合はユーザーが明示的に `git-shadow rebase` で解決する。hook 実行時に別の live プロセスが lock を保持している場合は、安全のため自動 rebase をスキップする。
 
 ### pre-commit 失敗時のロールバック
 
@@ -492,7 +555,7 @@ git worktree 環境でも正常に動作する。
 
 - **hooks は共有**: `git-shadow install` で作成される hook スクリプトは `common_dir/hooks/` に配置され、すべてのワーキングツリーで共有される。ただし、hooks の共有はフック発火のみに関わる。各ワーキングツリーでは `git-shadow install` を実行して `shadow/` ディレクトリ（`baselines/`、`stash/` 等）を初期化する必要がある。
 - **install 時の自動継承**: ワーキングツリーで `git-shadow install` を実行した際、メインリポジトリに `config.json` と shadow 管理対象ファイルが存在し、かつワーキングツリーに `config.json` がまだ存在しない場合、ファイルリストを自動的に継承する。overlay のベースラインはワーキングツリーの HEAD から再生成し、phantom エントリはそのままコピーする。この条件を満たす場合、`git-shadow add` を個別に実行する必要はない。
-- **shadow 状態は独立**: `config.json`、`baselines/`、`stash/`、`lock` は各ワーキングツリーの `git_dir` 配下に保存される。ワーキングツリーごとに異なるファイルを shadow 管理できる。継承後にファイルの追加・削除（`git-shadow add` / `git-shadow remove`）もワーキングツリーごとに独立して行える。
+- **shadow 状態は独立**: `config.json`、`baselines/`、`stash/`、`suspended/`、`lock` は各ワーキングツリーの `git_dir` 配下に保存される。ワーキングツリーごとに異なるファイルを shadow 管理できる。継承後にファイルの追加・削除（`git-shadow add` / `git-shadow remove`）もワーキングツリーごとに独立して行える。
 - **doctor による検出**: `git-shadow doctor` はワーキングツリー環境を検出し、`shadow/` ディレクトリが未初期化の場合は警告を表示して `git-shadow install` の実行を案内する。
 
 ### Git バージョン要件
@@ -506,7 +569,15 @@ git worktree 環境でも正常に動作する。
 以下は初期実装には含めない。
 
 - チームでの共有機能（テンプレート、export/import 等）
-- post-checkout hook によるブランチ切り替え時の自動対応（ただし status と pre-commit の不整合チェックでずれは検出できる）
-- post-merge での自動 rebase（`--auto` フラグ）
+- post-checkout hook によるブランチ切り替え時の自動対応（ただし status と pre-commit の不整合チェック、および `git-shadow suspend` / `resume` でずれに対応できる）
 - `git-shadow remove --keep`（shadow 変更を保持したまま管理解除し、通常のコミット対象にする）
 - GUI / TUI
+
+> 注: 当初「スコープ外」としていた post-merge での自動 rebase は、**クリーン時限定の自動 rebase** として実装済み（v5）。コンフリクト時は手動 `git-shadow rebase` を促す。ブランチ切り替え支援は `git-shadow suspend` / `resume` として実装済み（v5）。
+
+## 改訂履歴
+
+| バージョン | 主な変更点 |
+|---|---|
+| v5 | 実装に合わせて仕様を同期: `git-shadow suspend` / `resume` を追加、post-merge / post-rewrite でのクリーン時限定 自動 rebase を明記（旧「自動 rebase は行わない」を更新）、post-rewrite hook を追加、`git-shadow uninstall` を追加、`core.hooksPath` 対応、doctor の非ゼロ終了コードと inert hooks 検出、status / doctor の `--json` 出力を追記。 |
+| v4 | git worktree 対応（per-worktree state と共有 hooks/exclude、install 時の自動継承）。 |

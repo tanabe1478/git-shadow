@@ -5,6 +5,7 @@ use crate::ui::UiLocale;
 #[derive(Parser)]
 #[command(
     name = "git-shadow",
+    version,
     about = "Manage local-only changes in Git repositories"
 )]
 pub struct Cli {
@@ -16,6 +17,13 @@ pub struct Cli {
 pub enum Commands {
     /// Set up Git hooks
     Install,
+
+    /// Remove git-shadow hooks, exclude entries, and state
+    Uninstall {
+        /// Restore overlay baselines and wipe state even if files are still managed
+        #[arg(long)]
+        force: bool,
+    },
 
     /// Register a file for shadow management
     Add {
@@ -49,6 +57,9 @@ pub enum Commands {
         /// Show `git status --short --branch` before the shadow summary
         #[arg(long)]
         git: bool,
+        /// Emit machine-readable JSON (English, not localized)
+        #[arg(long)]
+        json: bool,
     },
 
     /// Show shadow changes as a diff
@@ -76,7 +87,11 @@ pub enum Commands {
     Resume,
 
     /// Diagnose hooks and configuration
-    Doctor,
+    Doctor {
+        /// Emit machine-readable JSON (English, not localized)
+        #[arg(long)]
+        json: bool,
+    },
 
     /// Internal subcommand called from hooks
     #[command(hide = true)]
@@ -113,6 +128,20 @@ fn localize_subcommands(command: clap::Command, locale: UiLocale) -> clap::Comma
         sub.about(match locale {
             UiLocale::Ja => "Git hooks を設定する",
             UiLocale::En => "Set up Git hooks",
+        })
+    });
+    let command = command.mut_subcommand("uninstall", |sub| {
+        sub.about(match locale {
+            UiLocale::Ja => "git-shadow の hooks・exclude・state を削除する",
+            UiLocale::En => "Remove git-shadow hooks, exclude entries, and state",
+        })
+        .mut_arg("force", |arg| {
+            arg.help(match locale {
+                UiLocale::Ja => "管理対象が残っていても overlay を復元して state を削除する",
+                UiLocale::En => {
+                    "Restore overlay baselines and wipe state even if files are still managed"
+                }
+            })
         })
     });
     let command = command.mut_subcommand("add", |sub| {
@@ -180,6 +209,12 @@ fn localize_subcommands(command: clap::Command, locale: UiLocale) -> clap::Comma
                 UiLocale::En => "Also show `git status --short --branch` first",
             })
         })
+        .mut_arg("json", |arg| {
+            arg.help(match locale {
+                UiLocale::Ja => "機械可読な JSON を出力する (英語・非ローカライズ)",
+                UiLocale::En => "Emit machine-readable JSON (English, not localized)",
+            })
+        })
     });
     let command = command.mut_subcommand("diff", |sub| {
         sub.about(match locale {
@@ -233,6 +268,12 @@ fn localize_subcommands(command: clap::Command, locale: UiLocale) -> clap::Comma
         sub.about(match locale {
             UiLocale::Ja => "hooks と設定を診断する",
             UiLocale::En => "Diagnose hooks and configuration",
+        })
+        .mut_arg("json", |arg| {
+            arg.help(match locale {
+                UiLocale::Ja => "機械可読な JSON を出力する (英語・非ローカライズ)",
+                UiLocale::En => "Emit machine-readable JSON (English, not localized)",
+            })
         })
     })
 }

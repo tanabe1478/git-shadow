@@ -14,6 +14,7 @@ Sometimes you need personal changes to shared files — debug settings in a conf
 |------|-------------|---------|
 | **overlay** | Layer local changes on top of an existing tracked file | Add personal debug settings to a shared `docker-compose.yml` |
 | **phantom** | Create a file that exists only locally and is never committed | Create a local-only `scripts/local-setup.sh` for your environment |
+| **phantom dir** | Manage an entire directory that exists only locally (exclude-only, no stash/restore) | Keep a local-only `.claude/` directory out of every commit |
 
 ## Installation
 
@@ -71,17 +72,20 @@ git show HEAD:docker-compose.yml  # clean, team-only content
 
 | Command | Description |
 |---------|-------------|
-| `git-shadow install` | Set up Git hooks (pre-commit, post-commit, post-merge, post-rewrite) |
+| `git-shadow install` | Set up Git hooks (pre-commit, post-commit, post-merge, post-rewrite); respects `core.hooksPath` |
+| `git-shadow uninstall [--force]` | Remove hooks, exclude entries, and state; `--force` restores overlays even when files are still managed |
 | `git-shadow add <file>...` | Register tracked files as overlays and existing untracked paths as phantoms automatically |
 | `git-shadow add --phantom <file>...` | Force local-only files/directories to be phantoms |
 | `git-shadow remove <file>` | Unregister a file from shadow management |
-| `git-shadow status [--git]` | Show managed files and their state, optionally prefixed by `git status --short --branch` |
+| `git-shadow status [--git] [--json]` | Show managed files and their state, optionally prefixed by `git status --short --branch`; `--json` emits stable English JSON for scripting |
 | `git-shadow diff [file]` | Show shadow changes as a unified diff |
 | `git-shadow rebase [file]` | Update baseline after upstream changes (3-way merge) |
 | `git-shadow restore [file]` | Recover from interrupted commits or crashes |
 | `git-shadow suspend` | Suspend shadow changes for branch switching |
 | `git-shadow resume` | Resume suspended shadow changes (with 3-way merge if needed) |
-| `git-shadow doctor` | Diagnose hooks, config integrity, and stale state |
+| `git-shadow doctor [--json]` | Diagnose hooks, config integrity, and stale state; exits non-zero when issues are found; `--json` emits stable English JSON |
+
+`git-shadow --version` prints the installed version.
 
 ## How It Works
 

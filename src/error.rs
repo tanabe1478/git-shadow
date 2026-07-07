@@ -35,8 +35,19 @@ pub enum ShadowError {
     #[error("stale lock detected (PID {0} no longer exists). Run `git-shadow restore`")]
     StaleLock(u32),
 
+    #[error("lockfile is corrupted (unreadable). Run `git-shadow restore`")]
+    CorruptLock,
+
+    #[error("3-way merge failed: {0}")]
+    MergeFailed(String),
+
     #[error("automatic stale-lock recovery would overwrite newer working tree content in '{0}'. Run `git-shadow restore` manually")]
     AutoRestoreConflict(String),
+
+    #[error(
+        "resume would overwrite working tree edits made to '{0}' while suspended. Resolve manually"
+    )]
+    ResumeEditConflict(String),
 
     #[error("stash has remaining files. Run `git-shadow restore`")]
     StashRemaining,
@@ -70,6 +81,12 @@ pub enum ShadowError {
 
     #[error("hooks not installed. Run `git-shadow install`")]
     HooksNotInstalled,
+
+    #[error("{0} file(s) are still managed by git-shadow. Remove them first or pass --force")]
+    UninstallHasEntries(usize),
+
+    #[error("doctor found {0} issue(s)")]
+    DoctorFoundIssues(usize),
 
     #[error("cannot run in non-interactive mode without --force")]
     NonInteractiveWithoutForce,

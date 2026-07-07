@@ -9,12 +9,13 @@ Root source directory. Modules are split by responsibility into focused, small f
 | `error.rs` | All error types via `thiserror` | `ShadowError` enum |
 | `config.rs` | JSON config load/save, file registry | `ShadowConfig`, `FileEntry`, `FileType`, `ExcludeMode` |
 | `path.rs` | Path normalization + URL encoding for flat storage | `normalize_path()`, `encode_path()`, `decode_path()` |
-| `lock.rs` | PID-based lockfile for concurrency safety | `LockStatus`, `acquire_lock()`, `release_lock()` |
+| `lock.rs` | PID-based lockfile for concurrency safety | `LockStatus` (`Free`/`HeldByOther`/`Stale`/`Corrupt`), `acquire_lock()`, `release_lock()`, `check_lock()` |
 | `fs_util.rs` | Atomic writes, binary detection, size checks | `atomic_write()`, `is_binary()`, `check_size()` |
-| `git.rs` | Worktree-aware Git CLI wrapper (no git2 crate) | `GitRepo` (root, git_dir, common_dir, shadow_dir; `hooks_dir()`) |
+| `git.rs` | Worktree-aware Git CLI wrapper (no git2 crate) | `GitRepo` (root, git_dir, common_dir, shadow_dir; `hooks_dir()`, `effective_hooks_dir()`) |
 | `exclude.rs` | `.git/info/exclude` section management | `ExcludeManager` |
 | `diff_util.rs` | Unified diff formatting with colors | `unified_diff()`, `print_colored_diff()` |
 | `merge.rs` | 3-way merge via `git merge-file -p --diff3` | `three_way_merge()`, `MergeResult` |
+| `ui.rs` | Locale (ja/en) detection + user-facing message/error formatting | `UiLocale`, `detect_locale()`, `format_error()` |
 | `cli.rs` | clap derive definitions | `Cli`, `Commands` enum |
 | `main.rs` | Entry point, dispatches to commands | - |
 | `lib.rs` | Re-exports all modules for integration tests | - |
@@ -42,7 +43,7 @@ Two error libraries are used intentionally:
 - **git_dir** -- per-worktree Git directory (`--git-dir`, e.g., `.git/worktrees/<name>`)
 - **common_dir** -- shared Git directory (`--git-common-dir`, e.g., `.git/`)
 
-`shadow_dir` is derived from `git_dir` (per-worktree state). `hooks_dir()` returns `common_dir.join("hooks")` so hooks are shared across worktrees. A `discover_fallback()` handles Git versions < 2.31 that lack `--git-common-dir`.
+`shadow_dir` is derived from `git_dir` (per-worktree state). `hooks_dir()` returns `common_dir.join("hooks")` so hooks are shared across worktrees; `effective_hooks_dir()` honors `core.hooksPath` when it is set (resolving a relative value against `root`) and otherwise falls back to `hooks_dir()` -- install/uninstall/doctor use the effective dir so hooks land where git actually runs them. A `discover_fallback()` handles Git versions < 2.31 that lack `--git-common-dir`.
 
 ### Atomic Writes
 
@@ -58,7 +59,7 @@ Decoding reverses the order. This guarantees `decode(encode(p)) == p` for any pa
 
 ### Lock Protocol
 
-`lock.rs` uses a PID + timestamp file. Stale detection uses `libc::kill(pid, 0)` (signal 0 = existence check without sending a signal). The lock is acquired by pre-commit and released by post-commit. If post-commit never runs (e.g., `--no-verify`), the lock becomes stale and `restore` cleans it up.
+`lock.rs` uses a PID + timestamp file, written atomically with `O_CREAT | O_EXCL` so concurrent acquirers cannot both win. Stale detection uses `libc::kill(pid, 0)` (signal 0 = existence check without sending a signal). `check_lock()` reports `Free`, `HeldByOther`, `Stale` (dead PID), or `Corrupt` (unparseable) without erroring, so callers can decide; `acquire_lock()` treats a corrupt lock like a stale one but does not silently clobber a live one. The lock is acquired by pre-commit and released by post-commit. If post-commit never runs (e.g., `--no-verify`), the lock becomes stale and `restore` cleans it up.
 
 ### ExcludeManager
 

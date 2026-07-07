@@ -133,6 +133,12 @@ fn add_overlay(
 
     fs_util::check_size(&file_path, force)?;
 
+    // Reject duplicates BEFORE writing the baseline, so a failed re-add cannot overwrite
+    // the stored baseline (which would leave baseline_commit inconsistent with its content).
+    if config.get(normalized).is_some() {
+        return Err(ShadowError::AlreadyManaged(normalized.to_string()).into());
+    }
+
     let commit = git.head_commit()?;
     let baseline_content = git.show_file("HEAD", normalized)?;
 
@@ -142,19 +148,13 @@ fn add_overlay(
 
     config.add_overlay(normalized.to_string(), commit)?;
 
-    println!(
-        "{}",
-        ui::registered_overlay(
-            locale,
-            normalized,
-            &config
-                .get(normalized)
-                .unwrap()
-                .baseline_commit
-                .as_deref()
-                .unwrap_or("?")[..7],
-        )
-    );
+    let baseline_commit = config
+        .get(normalized)
+        .and_then(|e| e.baseline_commit.as_deref())
+        .unwrap_or("?");
+    let short = &baseline_commit[..7.min(baseline_commit.len())];
+
+    println!("{}", ui::registered_overlay(locale, normalized, short));
     Ok(())
 }
 
@@ -174,19 +174,22 @@ fn add_phantom(
     let exclude_mode = if no_exclude {
         ExcludeMode::None
     } else {
-        let exclude_path = if is_dir {
-            format!("{}/", normalized)
-        } else {
-            normalized.to_string()
-        };
-        let manager = ExcludeManager::new(&git.common_dir);
-        manager
-            .add_entry(&exclude_path)
-            .context("failed to add to .git/info/exclude")?;
         ExcludeMode::GitInfoExclude
     };
 
-    config.add_phantom(normalized.to_string(), exclude_mode, is_dir)?;
+    // Register in config first so the duplicate check runs before we touch the shared
+    // exclude file.
+    config.add_phantom(normalized.to_string(), exclude_mode.clone(), is_dir)?;
+
+    if exclude_mode == ExcludeMode::GitInfoExclude {
+        // Regenerate the managed section from the union of all worktrees' configs. This
+        // writes anchored/escaped patterns and upgrades any stale unanchored entries.
+        let manager = ExcludeManager::new(&git.common_dir);
+        let patterns = crate::exclude::union_patterns(git, config);
+        manager
+            .set_entries(&patterns)
+            .context("failed to update .git/info/exclude")?;
+    }
 
     if is_dir {
         println!(
@@ -330,6 +333,29 @@ mod tests {
     }
 
     #[test]
+    fn test_add_overlay_duplicate_does_not_overwrite_baseline() {
+        let (_dir, git) = make_test_repo();
+        let mut config = ShadowConfig::new();
+        add_overlay(&git, &mut config, "CLAUDE.md", false).unwrap();
+
+        let encoded = path::encode_path("CLAUDE.md");
+        let baseline_path = git.shadow_dir.join("baselines").join(&encoded);
+
+        // Tamper with the stored baseline to a sentinel value.
+        std::fs::write(&baseline_path, b"SENTINEL BASELINE\n").unwrap();
+
+        // Re-adding the same file must fail without touching the baseline file.
+        let result = add_overlay(&git, &mut config, "CLAUDE.md", false);
+        assert!(result.is_err());
+
+        let content = std::fs::read_to_string(&baseline_path).unwrap();
+        assert_eq!(
+            content, "SENTINEL BASELINE\n",
+            "baseline must not be rewritten by a failed duplicate add"
+        );
+    }
+
+    #[test]
     fn test_add_phantom_creates_config_entry() {
         let (_dir, git) = make_test_repo();
         let phantom_dir = git.root.join("src").join("components");
@@ -356,7 +382,62 @@ mod tests {
 
         let manager = ExcludeManager::new(&git.common_dir);
         let entries = manager.list_entries().unwrap();
-        assert!(entries.contains(&"src/CLAUDE.md".to_string()));
+        assert!(
+            entries.contains(&"/src/CLAUDE.md".to_string()),
+            "pattern should be anchored, got: {:?}",
+            entries
+        );
+    }
+
+    #[test]
+    fn test_add_phantom_exclude_pattern_is_anchored_and_escaped() {
+        let (_dir, git) = make_test_repo();
+        // File name containing gitignore metacharacters.
+        std::fs::write(git.root.join("a[b]*.md"), "# Local\n").unwrap();
+
+        let mut config = ShadowConfig::new();
+        add_phantom(&git, &mut config, "a[b]*.md", false).unwrap();
+
+        let manager = ExcludeManager::new(&git.common_dir);
+        let entries = manager.list_entries().unwrap();
+        assert!(
+            entries.contains(&"/a\\[b\\]\\*.md".to_string()),
+            "pattern should be anchored and escaped, got: {:?}",
+            entries
+        );
+    }
+
+    #[test]
+    fn test_add_phantom_upgrades_unanchored_exclude_entry() {
+        let (_dir, git) = make_test_repo();
+        std::fs::write(git.root.join("local.md"), "# Local\n").unwrap();
+        std::fs::write(git.root.join("other.md"), "# Other\n").unwrap();
+
+        // Simulate a stale unanchored entry left by an older version, plus a config
+        // entry describing that phantom.
+        let manager = ExcludeManager::new(&git.common_dir);
+        manager.add_entry("local.md").unwrap();
+
+        let mut config = ShadowConfig::new();
+        config
+            .add_phantom("local.md".to_string(), ExcludeMode::GitInfoExclude, false)
+            .unwrap();
+
+        // Adding another phantom rewrites the section from config.
+        add_phantom(&git, &mut config, "other.md", false).unwrap();
+
+        let entries = manager.list_entries().unwrap();
+        assert!(
+            entries.contains(&"/local.md".to_string()),
+            "stale unanchored entry should be upgraded, got: {:?}",
+            entries
+        );
+        assert!(
+            !entries.contains(&"local.md".to_string()),
+            "unanchored entry should be gone, got: {:?}",
+            entries
+        );
+        assert!(entries.contains(&"/other.md".to_string()));
     }
 
     #[test]
@@ -398,7 +479,11 @@ mod tests {
 
         let manager = ExcludeManager::new(&git.common_dir);
         let entries = manager.list_entries().unwrap();
-        assert!(entries.contains(&".claude/".to_string()));
+        assert!(
+            entries.contains(&"/.claude/".to_string()),
+            "directory pattern should be anchored with trailing slash, got: {:?}",
+            entries
+        );
     }
 
     #[test]

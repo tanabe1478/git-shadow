@@ -1,46 +1,59 @@
 use anyhow::Result;
 use colored::Colorize;
+use serde::Serialize;
 
 use crate::config::{FileType, ShadowConfig};
+use crate::error::ShadowError;
 use crate::git::GitRepo;
 use crate::lock::{self, LockStatus};
 use crate::path;
-use crate::ui;
+use crate::ui::{self, UiLocale};
 
 const HOOK_NAMES: &[&str] = &["pre-commit", "post-commit", "post-merge", "post-rewrite"];
 const COMPETING_HOOKS: &[&str] = &[".husky", ".pre-commit-config.yaml", "lefthook.yml"];
 
-pub fn run() -> Result<()> {
+/// Machine-readable doctor report (stable English keys/values, not localized).
+#[derive(Serialize)]
+struct DoctorReport<'a> {
+    ok: bool,
+    issues: &'a [String],
+    warnings: &'a [String],
+}
+
+/// Run all diagnostic checks and collect issues (broken) and warnings (attention).
+fn collect(git: &GitRepo, config: &ShadowConfig, locale: UiLocale) -> (Vec<String>, Vec<String>) {
+    let mut issues = Vec::new();
+    let mut warnings = Vec::new();
+
+    check_hooks(git, &mut issues, &mut warnings, locale);
+    check_competing_hooks(git, &mut warnings, locale);
+    check_config_integrity(git, config, &mut issues, locale);
+    check_stash(git, &mut warnings, locale);
+    check_lock(git, &mut warnings, locale);
+    check_suspended(config, git, &mut warnings, locale);
+    check_worktree(git, &mut warnings, locale);
+
+    (issues, warnings)
+}
+
+pub fn run(json: bool) -> Result<()> {
     let locale = ui::detect_locale();
     let git = GitRepo::discover(&std::env::current_dir()?)?;
     let config = ShadowConfig::load(&git.shadow_dir)?;
 
-    let mut issues = Vec::new();
-    let mut warnings = Vec::new();
+    // JSON output must be stable and English regardless of locale.
+    let report_locale = if json { UiLocale::En } else { locale };
+    let (issues, warnings) = collect(&git, &config, report_locale);
+    let issue_count = issues.len();
 
-    // 1. Check hook files
-    check_hooks(&git, &mut issues, &mut warnings, locale);
-
-    // 2. Check competing hook managers
-    check_competing_hooks(&git, &mut warnings, locale);
-
-    // 3. Check config integrity
-    check_config_integrity(&git, &config, &mut issues, locale);
-
-    // 4. Check stash remnants
-    check_stash(&git, &mut warnings, locale);
-
-    // 5. Check lock
-    check_lock(&git, &mut warnings, locale);
-
-    // 6. Check suspended state
-    check_suspended(&config, &git, &mut warnings, locale);
-
-    // 7. Check worktree environment
-    check_worktree(&git, &mut warnings, locale);
-
-    // Print results
-    if issues.is_empty() && warnings.is_empty() {
+    if json {
+        let report = DoctorReport {
+            ok: issues.is_empty(),
+            issues: &issues,
+            warnings: &warnings,
+        };
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else if issues.is_empty() && warnings.is_empty() {
         println!("{}", ui::doctor_all_checks_passed(locale).green());
     } else {
         if !issues.is_empty() {
@@ -57,6 +70,12 @@ pub fn run() -> Result<()> {
         }
     }
 
+    // Issues (red) make doctor exit non-zero so scripts/CI can gate on it.
+    // Warnings alone keep a zero exit code. The full report is printed first.
+    if issue_count > 0 {
+        return Err(ShadowError::DoctorFoundIssues(issue_count).into());
+    }
+
     Ok(())
 }
 
@@ -66,8 +85,28 @@ fn check_hooks(
     warnings: &mut Vec<String>,
     locale: ui::UiLocale,
 ) {
+    let effective_dir = git.effective_hooks_dir();
+
+    // Detect inert hooks: installed in the default dir, but core.hooksPath points
+    // elsewhere so Git never runs them (silent data-leak risk).
+    if let Some(hooks_path) = git.hooks_path_config() {
+        let default_dir = git.hooks_dir();
+        if default_dir != effective_dir {
+            let default_installed = HOOK_NAMES
+                .iter()
+                .all(|name| hook_calls_shadow(&default_dir.join(name)));
+            let effective_installed = HOOK_NAMES
+                .iter()
+                .all(|name| hook_calls_shadow(&effective_dir.join(name)));
+            if default_installed && !effective_installed {
+                issues.push(ui::doctor_hooks_inert(locale, &hooks_path));
+                return;
+            }
+        }
+    }
+
     for hook_name in HOOK_NAMES {
-        let hook_path = git.hooks_dir().join(hook_name);
+        let hook_path = effective_dir.join(hook_name);
 
         if !hook_path.exists() {
             issues.push(ui::doctor_hook_missing(locale, hook_name));
@@ -92,6 +131,13 @@ fn check_hooks(
             }
         }
     }
+}
+
+/// Whether the hook file at `path` exists and dispatches to git-shadow.
+fn hook_calls_shadow(path: &std::path::Path) -> bool {
+    std::fs::read_to_string(path)
+        .map(|content| content.contains("git-shadow hook") || content.contains("git shadow hook"))
+        .unwrap_or(false)
 }
 
 fn check_competing_hooks(git: &GitRepo, warnings: &mut Vec<String>, locale: ui::UiLocale) {
@@ -423,6 +469,66 @@ mod tests {
             "Should have no issues when directory exists, got: {:?}",
             issues
         );
+    }
+
+    fn install_default_hooks(git: &GitRepo) {
+        let hooks_dir = git.hooks_dir();
+        std::fs::create_dir_all(&hooks_dir).unwrap();
+        for name in super::HOOK_NAMES {
+            let content = format!("#!/bin/sh\ngit-shadow hook {}\n", name);
+            std::fs::write(hooks_dir.join(name), &content).unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(
+                    hooks_dir.join(name),
+                    std::fs::Permissions::from_mode(0o755),
+                )
+                .unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn test_inert_hooks_detected_when_hooks_path_set() {
+        let (_dir, git) = make_test_repo();
+        // Hooks installed in the default dir...
+        install_default_hooks(&git);
+        // ...but core.hooksPath points elsewhere, so they never run.
+        std::process::Command::new("git")
+            .args(["config", "core.hooksPath", "dev-hooks"])
+            .current_dir(&git.root)
+            .output()
+            .unwrap();
+
+        let mut issues = Vec::new();
+        let mut warnings = Vec::new();
+        super::check_hooks(&git, &mut issues, &mut warnings, UiLocale::En);
+
+        assert!(
+            issues.iter().any(|i| i.contains("core.hooksPath")),
+            "should report inert hooks, got: {:?}",
+            issues
+        );
+    }
+
+    #[test]
+    fn test_collect_reports_issues_when_hooks_missing() {
+        let (_dir, git) = make_test_repo();
+        let config = ShadowConfig::new();
+        let (issues, _warnings) = super::collect(&git, &config, UiLocale::En);
+        assert!(!issues.is_empty(), "missing hooks should surface as issues");
+    }
+
+    #[test]
+    fn test_collect_no_issues_when_healthy() {
+        let (_dir, git) = make_test_repo();
+        let config = ShadowConfig::new();
+        config.save(&git.shadow_dir).unwrap();
+        install_default_hooks(&git);
+
+        let (issues, _warnings) = super::collect(&git, &config, UiLocale::En);
+        assert!(issues.is_empty(), "healthy repo should have no issues");
     }
 
     #[test]

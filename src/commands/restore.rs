@@ -1,13 +1,32 @@
 use anyhow::Result;
 
+use crate::error::ShadowError;
 use crate::git::GitRepo;
-use crate::lock;
+use crate::lock::{self, LockStatus};
 use crate::path;
 use crate::ui;
 
 pub fn run(file: Option<&str>) -> Result<()> {
     let locale = ui::detect_locale();
     let git = GitRepo::discover(&std::env::current_dir()?)?;
+    run_with(&git, file, locale)
+}
+
+fn run_with(git: &GitRepo, file: Option<&str>, locale: ui::UiLocale) -> Result<()> {
+    // Refuse to touch anything while a live process holds the lock: a commit is
+    // in progress and restoring stash/removing the lock would corrupt it. A
+    // stale (dead PID) or corrupt lock is safe to reclaim.
+    match lock::check_lock(&git.shadow_dir)? {
+        LockStatus::HeldByOther(info) => {
+            return Err(ShadowError::LockHeld {
+                pid: info.pid,
+                timestamp: info.timestamp.to_rfc3339(),
+            }
+            .into());
+        }
+        LockStatus::Free | LockStatus::HeldByUs | LockStatus::Stale(_) | LockStatus::Corrupt => {}
+    }
+
     let stash_dir = git.shadow_dir.join("stash");
     let mut restored = Vec::new();
 
@@ -192,39 +211,55 @@ mod tests {
         assert_eq!(content, "# Component\n");
     }
 
+    #[test]
+    fn test_refuses_when_lock_held_by_live_process() {
+        let (_dir, git) = make_test_repo();
+
+        // Stash something so we can prove it is NOT restored while locked.
+        fs_util::atomic_write(
+            &git.shadow_dir.join("stash").join("CLAUDE.md"),
+            b"# Shadow content\n",
+        )
+        .unwrap();
+        std::fs::write(git.root.join("CLAUDE.md"), "# Team\n").unwrap();
+
+        // Live lock held by a real, signalable child process.
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        std::fs::write(
+            git.shadow_dir.join("lock"),
+            format!(
+                "pid={}\ntimestamp={}",
+                child.id(),
+                chrono::Utc::now().to_rfc3339()
+            ),
+        )
+        .unwrap();
+
+        let result = run_with(&git, None, ui::UiLocale::En);
+        let _ = child.kill();
+        let _ = child.wait();
+
+        assert!(result.is_err(), "restore must refuse while lock is live");
+        let err = result.unwrap_err();
+        assert!(err
+            .downcast_ref::<ShadowError>()
+            .map(|e| matches!(e, ShadowError::LockHeld { .. }))
+            .unwrap_or(false));
+
+        // Nothing was touched: lock intact, stash still present, worktree unchanged.
+        assert!(git.shadow_dir.join("lock").exists());
+        assert!(git.shadow_dir.join("stash").join("CLAUDE.md").exists());
+        assert_eq!(
+            std::fs::read_to_string(git.root.join("CLAUDE.md")).unwrap(),
+            "# Team\n"
+        );
+    }
+
     /// Helper that runs restore logic directly (bypassing cwd discovery)
     fn restore_for_test(git: &GitRepo, file: Option<&str>) {
-        let stash_dir = git.shadow_dir.join("stash");
-        if stash_dir.exists() {
-            let entries: Vec<_> = std::fs::read_dir(&stash_dir)
-                .unwrap()
-                .filter_map(|e| e.ok())
-                .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
-                .collect();
-
-            for entry in entries {
-                let filename = entry.file_name();
-                let encoded = filename.to_string_lossy().to_string();
-                let normalized = path::decode_path(&encoded);
-
-                if let Some(target) = file {
-                    if normalized != target {
-                        continue;
-                    }
-                }
-
-                let worktree_path = git.root.join(&normalized);
-                if let Some(parent) = worktree_path.parent() {
-                    std::fs::create_dir_all(parent).unwrap();
-                }
-                let content = std::fs::read(entry.path()).unwrap();
-                std::fs::write(&worktree_path, &content).unwrap();
-                std::fs::remove_file(entry.path()).unwrap();
-            }
-        }
-
-        if git.shadow_dir.join("lock").exists() {
-            lock::release_lock(&git.shadow_dir).unwrap();
-        }
+        run_with(git, file, ui::UiLocale::En).unwrap();
     }
 }

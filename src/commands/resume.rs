@@ -89,56 +89,79 @@ fn resume_overlay(
     let old_baseline = std::fs::read_to_string(&baseline_path)
         .with_context(|| format!("failed to read baseline for {}", file_path))?;
 
+    // Current working-tree content (if any). Used to detect edits made while suspended.
+    let current = std::fs::read_to_string(&worktree_path).ok();
+
     // Get current HEAD content for this file
     let new_baseline = match git.show_file("HEAD", file_path) {
-        Ok(content) => String::from_utf8_lossy(&content).to_string(),
-        Err(_) => {
-            // File deleted in new branch — just restore the suspended content
-            std::fs::write(&worktree_path, suspended_content.as_bytes())
-                .with_context(|| format!("failed to restore {}", file_path))?;
+        Ok(content) => Some(String::from_utf8_lossy(&content).to_string()),
+        Err(_) => None,
+    };
+
+    // Determine what we would write to the working tree, plus any baseline/commit update.
+    let mut baseline_update: Option<String> = None;
+    let mut had_conflicts = false;
+    let incoming = match &new_baseline {
+        // File deleted in the new branch: restore the suspended content as-is.
+        None => suspended_content.clone(),
+        Some(nb) if *nb == old_baseline => {
+            // Baseline unchanged — restore suspended content directly.
+            suspended_content.clone()
+        }
+        Some(nb) => {
+            // Baseline changed — 3-way merge.
+            let merge_result =
+                merge::three_way_merge(&old_baseline, &suspended_content, nb, &git.shadow_dir)?;
+            baseline_update = Some(nb.clone());
+            had_conflicts = merge_result.has_conflicts;
+            merge_result.content
+        }
+    };
+
+    // Edit-safety: refuse to clobber working-tree edits made during suspension. The
+    // working tree is "untouched" if it still matches what suspend left (old baseline),
+    // what git would have produced (new baseline), or the content we are about to write.
+    if let Some(cur) = &current {
+        let matches_expected = *cur == old_baseline
+            || new_baseline.as_deref() == Some(cur.as_str())
+            || *cur == incoming;
+        if !matches_expected {
+            return Err(ShadowError::ResumeEditConflict(file_path.to_string()).into());
+        }
+    }
+
+    std::fs::write(&worktree_path, incoming.as_bytes())
+        .with_context(|| format!("failed to restore {}", file_path))?;
+
+    match (&new_baseline, baseline_update) {
+        (None, _) => {
             println!(
                 "{}",
                 ui::resume_restored_file_absent_from_head(ui::detect_locale(), file_path)
             );
-            return Ok(());
         }
-    };
-
-    if old_baseline == new_baseline {
-        // Baseline unchanged — restore suspended content directly
-        std::fs::write(&worktree_path, suspended_content.as_bytes())
-            .with_context(|| format!("failed to restore {}", file_path))?;
-        println!(
-            "{}",
-            ui::resume_restored_shadow_changes(ui::detect_locale(), file_path)
-        );
-    } else {
-        // Baseline changed — 3-way merge
-        let merge_result = merge::three_way_merge(
-            &old_baseline,
-            &suspended_content,
-            &new_baseline,
-            &git.shadow_dir,
-        )?;
-
-        std::fs::write(&worktree_path, merge_result.content.as_bytes())
-            .with_context(|| format!("failed to write merged content for {}", file_path))?;
-
-        // Update baseline
-        fs_util::atomic_write(&baseline_path, new_baseline.as_bytes())
-            .with_context(|| format!("failed to update baseline for {}", file_path))?;
-
-        if let Some(entry) = config.files.get_mut(file_path) {
-            entry.baseline_commit = Some(new_head.to_string());
-        }
-
-        if merge_result.has_conflicts {
-            eprintln!(
+        (Some(_), None) => {
+            println!(
                 "{}",
-                ui::resume_conflicts(ui::detect_locale(), file_path).yellow()
+                ui::resume_restored_shadow_changes(ui::detect_locale(), file_path)
             );
-        } else {
-            println!("{}", ui::resume_merged(ui::detect_locale(), file_path));
+        }
+        (Some(_), Some(new_baseline_content)) => {
+            fs_util::atomic_write(&baseline_path, new_baseline_content.as_bytes())
+                .with_context(|| format!("failed to update baseline for {}", file_path))?;
+
+            if let Some(entry) = config.files.get_mut(file_path) {
+                entry.baseline_commit = Some(new_head.to_string());
+            }
+
+            if had_conflicts {
+                eprintln!(
+                    "{}",
+                    ui::resume_conflicts(ui::detect_locale(), file_path).yellow()
+                );
+            } else {
+                println!("{}", ui::resume_merged(ui::detect_locale(), file_path));
+            }
         }
     }
 
@@ -160,6 +183,14 @@ fn resume_phantom(git: &GitRepo, suspended_dir: &std::path::Path, file_path: &st
 
     let content = std::fs::read(&suspend_path)
         .with_context(|| format!("failed to read suspended content for {}", file_path))?;
+
+    // Edit-safety: suspend removed the phantom, so the working tree should be absent. If a
+    // file reappeared with different content while suspended, refuse to overwrite it.
+    if let Ok(current) = std::fs::read(&worktree_path) {
+        if current != content {
+            return Err(ShadowError::ResumeEditConflict(file_path.to_string()).into());
+        }
+    }
 
     // Ensure parent directory exists
     if let Some(parent) = worktree_path.parent() {
@@ -372,6 +403,64 @@ mod tests {
     fn test_resume_not_suspended_is_error() {
         let config = ShadowConfig::new();
         assert!(!config.suspended);
+    }
+
+    #[test]
+    fn test_resume_overlay_refuses_when_worktree_edited() {
+        let (_dir, git) = make_test_repo();
+        let commit = git.head_commit().unwrap();
+        let mut config = ShadowConfig::new();
+
+        let baseline_content = git.show_file("HEAD", "CLAUDE.md").unwrap();
+        let encoded = path::encode_path("CLAUDE.md");
+        fs_util::atomic_write(
+            &git.shadow_dir.join("baselines").join(&encoded),
+            &baseline_content,
+        )
+        .unwrap();
+        config
+            .add_overlay("CLAUDE.md".to_string(), commit.clone())
+            .unwrap();
+
+        let suspended_dir = git.shadow_dir.join("suspended");
+        std::fs::create_dir_all(&suspended_dir).unwrap();
+        fs_util::atomic_write(&suspended_dir.join(&encoded), b"# Team\n# My shadow\n").unwrap();
+
+        // User edited the file while suspended (differs from baseline AND suspended content).
+        std::fs::write(
+            git.root.join("CLAUDE.md"),
+            "# Team\n# Edited while suspended\n",
+        )
+        .unwrap();
+
+        let err = super::resume_overlay(&git, &mut config, &suspended_dir, "CLAUDE.md", &commit)
+            .unwrap_err();
+        assert!(err.to_string().contains("overwrite"));
+
+        // Working tree edit must be preserved and suspended content kept.
+        let wt = std::fs::read_to_string(git.root.join("CLAUDE.md")).unwrap();
+        assert_eq!(wt, "# Team\n# Edited while suspended\n");
+        assert!(suspended_dir.join(&encoded).exists());
+    }
+
+    #[test]
+    fn test_resume_phantom_refuses_when_worktree_edited() {
+        let (_dir, git) = make_test_repo();
+
+        let suspended_dir = git.shadow_dir.join("suspended");
+        std::fs::create_dir_all(&suspended_dir).unwrap();
+        let encoded = path::encode_path("local.md");
+        fs_util::atomic_write(&suspended_dir.join(&encoded), b"# Local\n").unwrap();
+
+        // A file reappeared at that path with different content during suspension.
+        std::fs::write(git.root.join("local.md"), "# Different\n").unwrap();
+
+        let err = super::resume_phantom(&git, &suspended_dir, "local.md").unwrap_err();
+        assert!(err.to_string().contains("overwrite"));
+
+        let wt = std::fs::read_to_string(git.root.join("local.md")).unwrap();
+        assert_eq!(wt, "# Different\n");
+        assert!(suspended_dir.join(&encoded).exists());
     }
 
     #[test]
