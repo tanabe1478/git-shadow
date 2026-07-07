@@ -112,6 +112,26 @@ git show HEAD:docker-compose.yml  # クリーンなチーム用の内容のみ
 - デフォルトでは `git status` 自体は置き換えません。opt-in の統合表示として `git shadow status --git` を使ってください。
 - Git には一般的な pre-`add` hook がないため、overlay への早期警告は `git-shadow status` と commit 時の警告で補います。
 
+## Claude Code プラグイン
+
+このリポジトリには、AI コーディングエージェントが `git-shadow` を正しく扱えるようにするための
+[Claude Code](https://code.claude.com) スキルが同梱されています（[`skills/git-shadow/SKILL.md`](skills/git-shadow/SKILL.md)）。
+リポジトリ自体がプラグインの marketplace になっています。
+
+**marketplace 経由でインストール（推奨）:**
+
+```text
+/plugin marketplace add tanabe1478/git-shadow
+/plugin install git-shadow@git-shadow
+```
+
+**プラグインを使わない環境向けのフォールバック** — スキルを個人の skills ディレクトリに
+コピーまたはシンボリックリンクします:
+
+```bash
+ln -s "$(pwd)/skills/git-shadow" ~/.claude/skills/git-shadow   # または: cp -r skills/git-shadow ~/.claude/skills/git-shadow
+```
+
 ## ドキュメント
 
 - [詳細な使い方ガイド](docs/usage.ja.md) | [English](docs/usage.md)
