@@ -88,6 +88,18 @@ pub enum ShadowError {
     #[error("doctor found {0} issue(s)")]
     DoctorFoundIssues(usize),
 
+    #[error("nothing to export; no files are managed by git-shadow")]
+    NothingToExport,
+
+    #[error("output file '{0}' already exists. Use --force to overwrite")]
+    ExportFileExists(String),
+
+    #[error("unsupported export format version {0}; upgrade git-shadow")]
+    UnsupportedExportVersion(u32),
+
+    #[error("{0} file(s) could not be imported; see the messages above")]
+    ImportSomeSkipped(usize),
+
     #[error("cannot run in non-interactive mode without --force")]
     NonInteractiveWithoutForce,
 

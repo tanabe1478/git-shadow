@@ -286,8 +286,61 @@ git-shadow resume          # shadow changes restored
 
 - `git commit` is blocked (pre-commit hook will error)
 - `git-shadow diff` and `git-shadow rebase` are blocked
+- `git-shadow export` is blocked (resume first, so the archive captures your shadow content)
 - `git-shadow status` shows "SUSPENDED" state
 - `git-shadow doctor` reports suspended state as a warning
+
+## Migrating to a New Machine
+
+Shadow state lives under `.git/shadow/` and in `.git/info/exclude`, so it is **not** carried by `git clone`. To move your local-only setup to a freshly cloned repository on another machine, use `export` / `import`.
+
+> If you migrate your whole disk (or copy the entire `.git` directory), shadow state comes along automatically and no export/import is needed. `export` / `import` are for the common case of a fresh clone.
+
+### Export
+
+```bash
+# Bundle all managed state into a portable archive
+git-shadow export
+
+# → exported 2 managed file(s) to `/path/to/git-shadow-export.tar.gz`
+
+# Or choose the output path explicitly
+git-shadow export ~/backups/shadow.tar.gz
+
+# Overwrite an existing archive
+git-shadow export --force ~/backups/shadow.tar.gz
+```
+
+The archive is a gzipped tar (`.tar.gz`) with a `manifest.json` (`format_version`, tool version) plus one content member per managed entry. It includes:
+
+- **overlay** — the current working-tree (shadow) content **and** the stored baseline **and** the baseline commit, so `import` can 3-way merge if the target repository has moved on.
+- **phantom file** — the file's content.
+- **phantom directory** — every file under it, recursively.
+
+Binary content is stored as raw bytes and round-trips byte-for-byte. Export refuses to run when nothing is managed, while shadow is suspended (run `git-shadow resume` first), or while a commit cycle is mid-flight (stash remnant / live lock). The default output file is `git-shadow-export.tar.gz` in the current directory; existing files are not overwritten without `--force`.
+
+### Import
+
+On the new machine, clone the repository, run `git-shadow install`, then import:
+
+```bash
+git clone <repo-url> myrepo
+cd myrepo
+git-shadow install
+git-shadow import /path/to/git-shadow-export.tar.gz
+
+# → config.txt: imported overlay
+#   notes.md: imported phantom
+#   import finished: 2 imported, 0 skipped
+```
+
+Import is **safe by default** and continues past problems, reporting a summary at the end:
+
+- **phantom file / directory** — written and registered if the path is absent, or if it already exists with identical content (idempotent). If it exists with **different** content, the file is skipped with a per-file message and the command exits non-zero. `--force` overwrites instead.
+- **overlay** — the target must be tracked in HEAD (otherwise it is skipped: the repository does not match the export). The baseline is regenerated from the current HEAD. If HEAD matches the archived baseline, the shadow content is written directly; otherwise a 3-way merge (archived baseline / archived shadow / current HEAD) re-applies your shadow changes on top of upstream. A clean merge is written; a **conflict** is skipped (no conflict markers are written) and the command exits non-zero. `--force` keeps the shadow version, discarding the conflicting upstream hunk.
+- **already-managed entries** — an identical re-import is a no-op; an entry managed under a different type is skipped unless `--force` replaces it.
+
+Because import continues past conflicts, **re-running it after resolving** (removing the conflicting local edit, or passing `--force`) completes the remaining entries. Import requires `git-shadow install` first and refuses to run while suspended or mid-commit; it also validates the manifest's `format_version` and errors clearly on an unknown version.
 
 ## Recovery
 

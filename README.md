@@ -83,6 +83,8 @@ git show HEAD:docker-compose.yml  # clean, team-only content
 | `git-shadow restore [file]` | Recover from interrupted commits or crashes |
 | `git-shadow suspend` | Suspend shadow changes for branch switching |
 | `git-shadow resume` | Resume suspended shadow changes (with 3-way merge if needed) |
+| `git-shadow export [path] [--force]` | Bundle managed state into a portable archive for moving to a new machine |
+| `git-shadow import <archive> [--force]` | Restore managed state from an archive into a freshly cloned repo (3-way merge, safe-by-default) |
 | `git-shadow doctor [--json]` | Diagnose hooks, config integrity, and stale state; exits non-zero when issues are found; `--json` emits stable English JSON |
 
 `git-shadow --version` prints the installed version.

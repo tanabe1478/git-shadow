@@ -16,6 +16,8 @@ User-facing CLI commands. Each file corresponds to one subcommand and exposes a 
 | `git-shadow restore [file]` | `restore.rs` | Recovers from interrupted commits |
 | `git-shadow suspend` | `suspend.rs` | Suspends shadow changes for branch switching |
 | `git-shadow resume` | `resume.rs` | Resumes suspended shadow changes (with 3-way merge) |
+| `git-shadow export [path]` | `export.rs` | Bundles managed state into a portable archive |
+| `git-shadow import <archive>` | `import.rs` | Restores managed state from an archive (3-way merge, safe-by-default) |
 | `git-shadow doctor` | `doctor.rs` | Diagnoses hooks, config, stale state (`--json`, non-zero exit on issues) |
 | `git-shadow hook <name>` | `hook.rs` | Internal dispatcher called from hook scripts |
 
@@ -62,6 +64,12 @@ Saves shadow changes to `.git/shadow/suspended/` (separate from `stash/` which i
 ### resume.rs: Restore Suspended Changes
 
 Restores suspended shadow changes. If baseline is unchanged, restores directly. If baseline changed (different branch), performs 3-way merge via `merge::three_way_merge()`. Creates parent directories before writing (may be missing after branch switch). Cleans up `suspended/` directory and sets `config.suspended = false`.
+
+### export.rs / import.rs: Machine Migration
+
+`export` bundles per-worktree shadow state into a portable `.tar.gz` (see `src/archive.rs`): a `manifest.json` (`format_version`, tool version, per-entry metadata) plus content members named flatly via `path::encode_path` (`overlay/`, `baseline/`, `phantom/`, `phantomdir/`). For overlays it stores both the working-tree (shadow) content and the stored baseline (+ baseline_commit) so import can 3-way merge. Contents are `Vec<u8>` (binary-safe). Guards mirror uninstall/suspend: refuses when nothing is managed (`NothingToExport`), while suspended (`Suspended`), or mid-commit (`StashRemaining` / live `LockHeld`); refuses to overwrite the output unless `--force` (default `git-shadow-export.tar.gz`).
+
+`import` is safe-by-default and continues past problems, printing a `imported N, skipped M` summary and exiting non-zero if anything was skipped (`ImportSomeSkipped`). It requires `install` (`NotInitialized`), refuses while suspended/mid-commit, and validates `format_version` (`UnsupportedExportVersion`). Per entry: phantoms are written if absent or byte-identical (idempotent), skipped on differing content unless `--force`. Overlays must be tracked in HEAD (else skip); the baseline is regenerated from current HEAD, and the working tree gets the archived shadow (HEAD == archived baseline) or a 3-way merge (`merge::three_way_merge`) of archived-baseline / archived-shadow / current-HEAD — clean merges are written, conflicts are skipped without writing markers unless `--force` (shadow wins). Phantom registration + `.git/info/exclude` reuse `add`'s machinery (`exclude::union_patterns` + `ExcludeManager::set_entries`).
 
 ### hook.rs: Hidden Command
 

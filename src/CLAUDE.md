@@ -15,6 +15,7 @@ Root source directory. Modules are split by responsibility into focused, small f
 | `exclude.rs` | `.git/info/exclude` section management | `ExcludeManager` |
 | `diff_util.rs` | Unified diff formatting with colors | `unified_diff()`, `print_colored_diff()` |
 | `merge.rs` | 3-way merge via `git merge-file -p --diff3` | `three_way_merge()`, `MergeResult` |
+| `archive.rs` | Portable export/import archive format (tar.gz + manifest.json) | `Manifest`, `ManifestEntry`, `write_archive()`, `read_archive()` |
 | `ui.rs` | Locale (ja/en) detection + user-facing message/error formatting | `UiLocale`, `detect_locale()`, `format_error()` |
 | `cli.rs` | clap derive definitions | `Cli`, `Commands` enum |
 | `main.rs` | Entry point, dispatches to commands | - |

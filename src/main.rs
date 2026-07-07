@@ -28,6 +28,8 @@ fn run() -> anyhow::Result<()> {
         Commands::Diff { file } => commands::diff::run(file.as_deref())?,
         Commands::Rebase { file } => commands::rebase::run(file.as_deref())?,
         Commands::Restore { file } => commands::restore::run(file.as_deref())?,
+        Commands::Export { output, force } => commands::export::run(output, force)?,
+        Commands::Import { archive, force } => commands::import::run(archive, force)?,
         Commands::Suspend => commands::suspend::run()?,
         Commands::Resume => commands::resume::run()?,
         Commands::Doctor { json } => commands::doctor::run(json)?,

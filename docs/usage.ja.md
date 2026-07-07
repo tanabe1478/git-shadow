@@ -286,8 +286,61 @@ git-shadow resume          # shadow 変更を復元
 
 - `git commit` はブロックされます（pre-commit hook がエラーを返す）
 - `git-shadow diff` と `git-shadow rebase` はブロックされます
+- `git-shadow export` はブロックされます（先に resume すれば archive に shadow の内容が入ります）
 - `git-shadow status` は "SUSPENDED" 状態を表示します
 - `git-shadow doctor` は suspended 状態を警告として報告します
+
+## 新しいマシンへの移行
+
+shadow の state は `.git/shadow/` と `.git/info/exclude` に保存されるため、`git clone` では引き継がれません。別マシンで新しく clone したリポジトリにローカル専用の設定を移すには、`export` / `import` を使います。
+
+> ディスク全体を移行する（あるいは `.git` ディレクトリごとコピーする）場合は、shadow の state もそのまま付いてくるため export/import は不要です。`export` / `import` は「新しく clone した」よくあるケース向けです。
+
+### Export
+
+```bash
+# 管理中の state をポータブルな archive にまとめる
+git-shadow export
+
+# → exported 2 managed file(s) to `/path/to/git-shadow-export.tar.gz`
+
+# 出力先を明示することもできる
+git-shadow export ~/backups/shadow.tar.gz
+
+# 既存の archive を上書きする
+git-shadow export --force ~/backups/shadow.tar.gz
+```
+
+archive は gzip 圧縮された tar (`.tar.gz`) で、`manifest.json`（`format_version`・ツールバージョン）と管理対象ごとの内容ファイルを含みます。含まれる内容:
+
+- **overlay** — 現在の working tree（shadow）の内容 **と** 保存済み baseline **と** baseline commit。移行先リポジトリが先に進んでいた場合に `import` が 3-way merge できるようにするためです。
+- **phantom file** — ファイルの内容。
+- **phantom directory** — 配下の全ファイル（再帰的）。
+
+バイナリ内容は生バイトとして保存され、バイト単位で完全に往復します。export は、管理対象が無いとき・suspend 中（先に `git-shadow resume`）・commit 処理の途中（stash 残骸 / ライブロック）には実行を拒否します。既定の出力先はカレントディレクトリの `git-shadow-export.tar.gz` で、既存ファイルは `--force` なしでは上書きしません。
+
+### Import
+
+新しいマシンでリポジトリを clone し、`git-shadow install` を実行してから import します:
+
+```bash
+git clone <repo-url> myrepo
+cd myrepo
+git-shadow install
+git-shadow import /path/to/git-shadow-export.tar.gz
+
+# → config.txt: imported overlay
+#   notes.md: imported phantom
+#   import finished: 2 imported, 0 skipped
+```
+
+import は **デフォルトで安全側** に動作し、問題があっても続行して最後に集計を報告します:
+
+- **phantom file / directory** — パスが存在しない、または既存でも内容が同一（冪等）なら書き込んで登録します。**異なる**内容で既に存在する場合は、ファイルごとのメッセージを出してスキップし、コマンドは非ゼロで終了します。`--force` を付けると上書きします。
+- **overlay** — 対象は HEAD に追跡されている必要があります（そうでなければスキップ: リポジトリが export 元と一致しません）。baseline は現在の HEAD から再生成します。HEAD が archive 内の baseline と一致すれば shadow の内容をそのまま書き込み、異なれば 3-way merge（archive の baseline / archive の shadow / 現在の HEAD）で shadow の変更を upstream の上に再適用します。クリーンな merge は書き込み、**conflict** はスキップ（conflict marker は書き込みません）してコマンドは非ゼロ終了します。`--force` を付けると、衝突する upstream の hunk を捨てて shadow を優先します。
+- **管理済みエントリ** — 同一内容の再 import は no-op。別の種類として管理されているエントリは、`--force` で置き換える場合を除きスキップします。
+
+import は conflict を越えて続行するため、**解消してから再実行**すれば（衝突するローカル変更を消す、または `--force` を付ける）残りのエントリを処理できます。import は先に `git-shadow install` が必要で、suspend 中や commit 処理の途中では拒否します。また manifest の `format_version` を検証し、未知のバージョンには明確なエラーを返します。
 
 ## リカバリ
 

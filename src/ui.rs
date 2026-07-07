@@ -763,6 +763,115 @@ pub fn status_git_wrapper_hint(locale: UiLocale) -> &'static str {
     )
 }
 
+pub fn export_success(locale: UiLocale, count: usize, output: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!("{count} 件の管理対象を `{output}` に export しました"),
+        UiLocale::En => format!("exported {count} managed file(s) to `{output}`"),
+    }
+}
+
+pub fn import_success(locale: UiLocale, count: usize) -> String {
+    match locale {
+        UiLocale::Ja => format!("{count} 件のファイルを import しました"),
+        UiLocale::En => format!("imported {count} file(s)"),
+    }
+}
+
+pub fn import_summary(locale: UiLocale, imported: usize, skipped: usize) -> String {
+    match locale {
+        UiLocale::Ja => format!("import 完了: {imported} 件成功 / {skipped} 件スキップ"),
+        UiLocale::En => format!("import finished: {imported} imported, {skipped} skipped"),
+    }
+}
+
+pub fn import_imported_overlay(locale: UiLocale, path: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!("{path}: overlay を import しました"),
+        UiLocale::En => format!("{path}: imported overlay"),
+    }
+}
+
+pub fn import_merged_overlay(locale: UiLocale, path: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!("{path}: overlay を import し upstream の変更と merge しました"),
+        UiLocale::En => format!("{path}: imported overlay and merged with upstream changes"),
+    }
+}
+
+pub fn import_imported_phantom(locale: UiLocale, path: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!("{path}: phantom を import しました"),
+        UiLocale::En => format!("{path}: imported phantom"),
+    }
+}
+
+pub fn import_imported_phantom_dir(locale: UiLocale, path: &str, count: usize) -> String {
+    match locale {
+        UiLocale::Ja => format!("{path}: phantom directory を import しました ({count} entries)"),
+        UiLocale::En => format!("{path}: imported phantom directory ({count} entries)"),
+    }
+}
+
+pub fn import_skip_overlay_untracked(locale: UiLocale, path: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!(
+            "skip {path}: HEAD に追跡されていません (このリポジトリは export 元と一致しません)"
+        ),
+        UiLocale::En => {
+            format!("skip {path}: not tracked in HEAD (this repository does not match the export)")
+        }
+    }
+}
+
+pub fn import_skip_overlay_conflict(locale: UiLocale, path: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!(
+            "skip {path}: upstream の変更と衝突しました。手動で解消してから再度 import してください (`--force` で shadow を優先)"
+        ),
+        UiLocale::En => format!(
+            "skip {path}: conflicts with upstream changes. Resolve manually and re-import (use `--force` to keep the shadow version)"
+        ),
+    }
+}
+
+pub fn import_skip_overlay_worktree_modified(locale: UiLocale, path: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!(
+            "skip {path}: working tree に import 由来でないローカル変更があります (`--force` で上書き)"
+        ),
+        UiLocale::En => format!(
+            "skip {path}: the working tree has local modifications that did not come from this import (use `--force` to overwrite)"
+        ),
+    }
+}
+
+pub fn import_skip_phantom_conflict(locale: UiLocale, path: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!("skip {path}: 既に存在し内容が異なります (`--force` で上書き)"),
+        UiLocale::En => format!(
+            "skip {path}: already exists with different content (use `--force` to overwrite)"
+        ),
+    }
+}
+
+pub fn import_skip_already_managed(locale: UiLocale, path: &str) -> String {
+    match locale {
+        UiLocale::Ja => {
+            format!("skip {path}: 既に別の種類として管理されています (`--force` で置き換え)")
+        }
+        UiLocale::En => {
+            format!("skip {path}: already managed with a different type (use `--force` to replace)")
+        }
+    }
+}
+
+pub fn import_missing_content(locale: UiLocale, path: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!("skip {path}: archive に内容が含まれていません"),
+        UiLocale::En => format!("skip {path}: archive is missing its content"),
+    }
+}
+
 fn choose(locale: UiLocale, ja: &'static str, en: &'static str) -> &'static str {
     match locale {
         UiLocale::Ja => ja,
@@ -914,6 +1023,19 @@ fn format_shadow_error_ja(err: &ShadowError) -> String {
         ShadowError::DoctorFoundIssues(count) => {
             format!("エラー: doctor が {count} 件の問題を検出しました")
         }
+        ShadowError::NothingToExport => {
+            "エラー: export 対象がありません。git-shadow が管理しているファイルはありません"
+                .to_string()
+        }
+        ShadowError::ExportFileExists(path) => format!(
+            "エラー: 出力先 `{path}` が既に存在します。上書きするには `--force` を使ってください"
+        ),
+        ShadowError::UnsupportedExportVersion(version) => format!(
+            "エラー: 未対応の export フォーマット version ({version}) です。git-shadow を更新してください"
+        ),
+        ShadowError::ImportSomeSkipped(count) => format!(
+            "エラー: {count} 件のファイルを import できませんでした。上のメッセージを確認してください"
+        ),
         ShadowError::NonInteractiveWithoutForce => {
             "エラー: 非対話モードでは `--force` が必要です".to_string()
         }
@@ -1052,6 +1174,18 @@ What to do:\n\
         ShadowError::DoctorFoundIssues(count) => {
             format!("Error: doctor found {count} issue(s)")
         }
+        ShadowError::NothingToExport => {
+            "Error: nothing to export; no files are managed by git-shadow".to_string()
+        }
+        ShadowError::ExportFileExists(path) => {
+            format!("Error: output file `{path}` already exists. Use `--force` to overwrite")
+        }
+        ShadowError::UnsupportedExportVersion(version) => format!(
+            "Error: unsupported export format version {version}; upgrade git-shadow"
+        ),
+        ShadowError::ImportSomeSkipped(count) => format!(
+            "Error: {count} file(s) could not be imported; see the messages above"
+        ),
         ShadowError::NonInteractiveWithoutForce => {
             "Error: `--force` is required in non-interactive mode".to_string()
         }
