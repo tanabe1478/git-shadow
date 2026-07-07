@@ -42,9 +42,12 @@ src/
   exclude.rs           # .git/info/exclude section management
   diff_util.rs         # Unified diff formatting (similar crate)
   merge.rs             # 3-way merge via `git merge-file -p --diff3`
+  archive.rs           # export/import archive format (tar.gz + manifest.json)
   commands/
     install.rs         # Set up hooks + .git/shadow/ structure
     uninstall.rs       # Remove hooks + shadow state (refuses with active entries unless --force)
+    export.rs          # Bundle managed state into a portable archive
+    import.rs          # Restore managed state from an archive (3-way merge, safe-by-default)
     add.rs             # Register overlay or phantom
     remove.rs          # Unregister with confirmation prompt
     status.rs          # Show managed files, warnings (--json)
@@ -66,6 +69,7 @@ tests/
   test_worktree.rs        # E2E: worktree discovery, install, commit cycle, config inheritance
   test_git_operations.rs  # E2E: amend, rebase, merge, cherry-pick, pathspec, live-lock
   test_localized_errors.rs # E2E: locale-aware messages, --version, --json, uninstall
+  test_export_import.rs   # E2E: export/import roundtrip, merge, conflict, binary, idempotency
 ```
 
 ### Path Encoding

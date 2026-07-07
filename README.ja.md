@@ -83,6 +83,8 @@ git show HEAD:docker-compose.yml  # クリーンなチーム用の内容のみ
 | `git-shadow restore [file]` | 中断されたコミットやクラッシュからの復旧 |
 | `git-shadow suspend` | ブランチ切替のために shadow 変更を一時退避 |
 | `git-shadow resume` | 退避した shadow 変更を復元（必要に応じて 3-way merge） |
+| `git-shadow export [path] [--force]` | 管理中の state をポータブルな archive にまとめて別マシンへ移行 |
+| `git-shadow import <archive> [--force]` | 新しく clone したリポジトリに archive から state を復元（3-way merge・デフォルト安全側） |
 | `git-shadow doctor [--json]` | hooks・設定の整合性・残留状態を診断。問題があれば非ゼロで終了。`--json` は安定した英語 JSON を出力 |
 
 `git-shadow --version` でインストール済みのバージョンを表示します。

@@ -11,6 +11,7 @@ Integration and E2E tests. Unit tests live alongside their modules in `src/` via
 | `test_worktree.rs` | E2E tests for git worktree support |
 | `test_git_operations.rs` | E2E tests running real `git` commands against the installed hooks |
 | `test_localized_errors.rs` | E2E tests for locale-aware output, `--version`, `--json`, `uninstall` |
+| `test_export_import.rs` | E2E tests for `export`/`import`: clone roundtrip, upstream merge/conflict, binary, URL-encoded paths, refusals, idempotency, locale |
 
 ## TestRepo Helper
 
@@ -53,6 +54,18 @@ Six scenarios that install the real hooks and run real `git` commands (the built
 ## E2E Tests (test_localized_errors.rs)
 
 Locale-aware output and CLI-surface scenarios, including: English/Japanese error and help/status messages selected from locale env vars, `--version`, `doctor` non-zero exit on issues plus valid English `--json`, valid `status --json`, and `uninstall` removing hooks/state (and refusing with active entries).
+
+## E2E Tests (test_export_import.rs)
+
+Ten scenarios building a source repo, `export`ing, `git clone`ing to a fresh repo, and `import`ing the built binary via `PATH` (locale pinned hermetically):
+
+1. **`test_full_roundtrip_and_commit_cycle`**: overlay + phantom file + nested phantom dir → export → clone → install → import; phantom files/dir byte-identical, overlay carries shadow, then a real commit cycle leaks no shadow and restores it
+2. **`test_upstream_moved_clean_merge`**: upstream changed a non-overlapping region → import merges upstream + shadow; commit cycle stays clean
+3. **`test_upstream_moved_conflict_skips_then_force`**: overlapping change → import skips the overlay (non-zero) but imports phantoms; `--force` re-run keeps the shadow version
+4. **`test_binary_phantom_roundtrip`**: phantom with null bytes round-trips byte-identical
+5. **`test_nested_url_encoding_path_roundtrip`**: phantom dir with a space and `%` in the path round-trips
+6. **`test_import_without_install_is_rejected`**, **`test_export_nothing_managed_is_rejected_localized`** (ja + en), **`test_export_refuses_with_stash_remnant`**, **`test_import_existing_differing_phantom_conflict_and_force`**: guard/refusal coverage
+7. **`test_import_twice_is_idempotent`**: a second import exits 0 and changes nothing
 
 ## Testing Patterns
 

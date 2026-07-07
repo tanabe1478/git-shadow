@@ -330,6 +330,39 @@ git-shadow resume
 3. suspend 中にワーキングツリーで編集されたファイルは、上書きを避けるため resume を拒否する（`.git/shadow/suspended/` の内容と統合してから再実行する）。
 4. `suspended/` をクリーンアップし、`config.suspended = false` にする。
 
+### `git-shadow export`
+
+shadow の state を、別マシンへ移行できるポータブルな archive にまとめる。`.git/shadow/` と `.git/info/exclude` は `git clone` で引き継がれないため、新しく clone したリポジトリへローカル専用の設定を移すためのコマンド。
+
+```bash
+git-shadow export                       # 既定: ./git-shadow-export.tar.gz
+git-shadow export <output-path>
+git-shadow export --force <output-path> # 既存ファイルを上書き
+```
+
+- 出力形式: gzip 圧縮 tar (`.tar.gz`)。`manifest.json`（`format_version`, ツールバージョン, エントリごとのメタデータ）と、管理対象ごとの内容ファイル（`overlay/` = shadow 内容, `baseline/` = ベースライン, `phantom/`, `phantomdir/`）を含む。パス区切りは `path::encode_path` でエンコードしフラットに格納する。内容はバイナリ安全（バイト列としてそのまま保存）。
+- overlay は shadow 内容とベースライン（および baseline_commit）の両方を格納し、import 時の 3-way merge を可能にする。phantom directory は配下の全ファイルを再帰的に格納する。
+- ガード: 管理対象が無い / suspend 中 / commit 処理の途中（stash 残骸・ライブロック）の場合は拒否する。出力先が既に存在する場合は `--force` なしでは上書きしない。
+
+### `git-shadow import`
+
+archive から shadow の state を復元する。新しいマシンで clone → `git-shadow install` の後に実行する。デフォルトで安全側に動作し、問題があっても続行して最後に「imported N, skipped M」を報告する。
+
+```bash
+git-shadow import <archive-path>
+git-shadow import --force <archive-path>
+```
+
+処理フロー:
+
+1. `git-shadow install` 済みであることを要求（未初期化なら install を案内）。suspend 中 / commit 処理の途中では拒否する。`manifest` の `format_version` を検証し、未知バージョンは明確なエラーにする。
+2. phantom（ファイル / ディレクトリ）: 対象パスが無い、または内容が同一なら書き込んで登録（冪等）。異なる内容で既存の場合はスキップして報告する（`--force` で上書き）。
+3. overlay: 対象は HEAD に追跡されている必要がある（無ければスキップ）。ベースラインは現在の HEAD から再生成する。HEAD が archive のベースラインと一致すれば shadow 内容をそのまま、異なれば 3-way merge（archive のベースライン / archive の shadow / 現在の HEAD）で再適用する。クリーンなら書き込み、コンフリクトはマーカーを書かずにスキップする（`--force` で shadow を優先）。
+4. phantom の登録と `.git/info/exclude` 更新は `add` の仕組み（`exclude::union_patterns` + `ExcludeManager::set_entries`）を再利用する。
+5. スキップが 1 件でもあれば非ゼロで終了する。
+
+> ディスク全体の移行や `.git` ごとのコピーでは shadow 状態もそのまま移るため、export/import は不要。
+
 ## 内部データ構造
 
 ### 保存先
@@ -579,5 +612,5 @@ git worktree 環境でも正常に動作する。
 
 | バージョン | 主な変更点 |
 |---|---|
-| v5 | 実装に合わせて仕様を同期: `git-shadow suspend` / `resume` を追加、post-merge / post-rewrite でのクリーン時限定 自動 rebase を明記（旧「自動 rebase は行わない」を更新）、post-rewrite hook を追加、`git-shadow uninstall` を追加、`core.hooksPath` 対応、doctor の非ゼロ終了コードと inert hooks 検出、status / doctor の `--json` 出力を追記。 |
+| v5 | 実装に合わせて仕様を同期: `git-shadow suspend` / `resume` を追加、post-merge / post-rewrite でのクリーン時限定 自動 rebase を明記（旧「自動 rebase は行わない」を更新）、post-rewrite hook を追加、`git-shadow uninstall` を追加、`core.hooksPath` 対応、doctor の非ゼロ終了コードと inert hooks 検出、status / doctor の `--json` 出力を追記。別マシン移行のための `git-shadow export` / `import`（tar.gz + manifest.json、overlay は 3-way merge で再適用、デフォルト安全側）を追加。 |
 | v4 | git worktree 対応（per-worktree state と共有 hooks/exclude、install 時の自動継承）。 |
