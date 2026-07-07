@@ -36,13 +36,22 @@ fn run_git_shadow(
     args: &[&str],
 ) -> std::process::Output {
     let path = prepend_path(bin_dir);
-    Command::new("git-shadow")
-        .args(args)
-        .current_dir(root)
-        .env("PATH", path)
-        .env("LANG", locale)
-        .output()
-        .unwrap()
+    let mut cmd = Command::new("git-shadow");
+    cmd.args(args).current_dir(root).env("PATH", path);
+    apply_locale(&mut cmd, locale);
+    cmd.output().unwrap()
+}
+
+/// Pin the process locale hermetically. `detect_locale()` reads
+/// `LC_ALL` > `LC_MESSAGES` > `LANG`, so setting only `LANG` is not enough:
+/// a runner that exports `LC_ALL`/`LC_MESSAGES` (macOS GitHub runners do)
+/// would win and flip the detected locale. Clearing the higher-priority vars
+/// and setting all three to the requested locale makes these assertions
+/// independent of the ambient environment.
+fn apply_locale(cmd: &mut Command, locale: &str) {
+    cmd.env("LC_ALL", locale)
+        .env("LC_MESSAGES", locale)
+        .env("LANG", locale);
 }
 
 fn prepend_path(bin_dir: &Path) -> String {
@@ -89,13 +98,13 @@ fn test_partial_stage_message_is_japanese_for_japanese_locale() {
     )
     .unwrap();
 
-    let output = Command::new("git")
+    let mut commit = Command::new("git");
+    commit
         .args(["commit", "-m", "partial"])
         .current_dir(repo.path())
-        .env("PATH", prepend_path(bin_dir))
-        .env("LANG", "ja_JP.UTF-8")
-        .output()
-        .unwrap();
+        .env("PATH", prepend_path(bin_dir));
+    apply_locale(&mut commit, "ja_JP.UTF-8");
+    let output = commit.output().unwrap();
 
     assert!(!output.status.success());
 
