@@ -113,9 +113,15 @@ fn suspend_overlay(git: &GitRepo, suspended_dir: &std::path::Path, file_path: &s
     fs_util::atomic_write(&suspend_path, &content)
         .with_context(|| format!("failed to save suspended content for {}", file_path))?;
 
-    // Restore baseline content to working tree
-    std::fs::write(&worktree_path, &baseline)
-        .with_context(|| format!("failed to restore baseline for {}", file_path))?;
+    // Restore baseline content to working tree. If this fails, the suspended copy we
+    // just wrote is not yet in the caller's rollback list, so remove it here to avoid
+    // leaving an orphan behind in suspended/.
+    if let Err(e) = std::fs::write(&worktree_path, &baseline)
+        .with_context(|| format!("failed to restore baseline for {}", file_path))
+    {
+        let _ = std::fs::remove_file(&suspend_path);
+        return Err(e);
+    }
 
     Ok(())
 }
@@ -222,6 +228,46 @@ mod tests {
         // Suspended should have shadow content
         let suspended = std::fs::read_to_string(suspended_dir.join(&encoded)).unwrap();
         assert_eq!(suspended, "# Team\n# My shadow\n");
+    }
+
+    #[test]
+    fn test_suspend_overlay_cleans_up_on_baseline_restore_failure() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (_dir, git) = make_test_repo();
+        let file = "CLAUDE.md";
+        let encoded = path::encode_path(file);
+
+        // Baseline exists and is readable.
+        fs_util::atomic_write(
+            &git.shadow_dir.join("baselines").join(&encoded),
+            b"# Team\n",
+        )
+        .unwrap();
+
+        // Working tree file carries shadow changes and is readable, but read-only so the
+        // baseline-restore write fails AFTER the suspended copy has been written.
+        let wt = git.root.join(file);
+        std::fs::write(&wt, "# Team\n# shadow\n").unwrap();
+        std::fs::set_permissions(&wt, std::fs::Permissions::from_mode(0o444)).unwrap();
+
+        let suspended_dir = git.shadow_dir.join("suspended");
+        std::fs::create_dir_all(&suspended_dir).unwrap();
+
+        let result = super::suspend_overlay(&git, &suspended_dir, file);
+
+        // Restore write permission so the tempdir can be cleaned up regardless of outcome.
+        std::fs::set_permissions(&wt, std::fs::Permissions::from_mode(0o644)).ok();
+
+        assert!(
+            result.is_err(),
+            "restore should fail writing to a read-only worktree file"
+        );
+        // The in-flight suspended copy must not be orphaned.
+        assert!(
+            !suspended_dir.join(&encoded).exists(),
+            "suspended copy should be cleaned up on baseline-restore failure"
+        );
     }
 
     #[test]

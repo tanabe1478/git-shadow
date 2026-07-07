@@ -129,12 +129,25 @@ impl GitRepo {
 
     /// Read the `core.hooksPath` configuration value.
     ///
-    /// Returns `None` when it is unset or empty. The value may be absolute or relative;
-    /// relative values are resolved against the working-tree root by
+    /// Returns `None` when it is unset or empty. The value may still be absolute or
+    /// relative; relative values are resolved against the working-tree root by
     /// [`GitRepo::effective_hooks_dir`].
+    ///
+    /// The value is queried with `--type=path` so Git expands a leading `~`/`~user`
+    /// (e.g. `~/.git-hooks-global` -> `/home/you/.git-hooks-global`). Without this, a
+    /// tilde value would be treated as repo-relative and resolve under `<root>/~/...`.
+    /// `--type=path` requires Git >= 2.18; on older Git the typed query fails and we fall
+    /// back to the raw read (which cannot expand `~`, matching the previous behavior).
     pub fn hooks_path_config(&self) -> Option<String> {
+        self.read_hooks_path(&["config", "--type=path", "--get", "core.hooksPath"])
+            .or_else(|| self.read_hooks_path(&["config", "--get", "core.hooksPath"]))
+    }
+
+    /// Run a `git config` query for `core.hooksPath`, returning the trimmed value or
+    /// `None` when the command fails or the value is unset/empty.
+    fn read_hooks_path(&self, args: &[&str]) -> Option<String> {
         let output = Command::new("git")
-            .args(["config", "--get", "core.hooksPath"])
+            .args(args)
             .current_dir(&self.root)
             .output()
             .ok()?;
@@ -600,6 +613,43 @@ mod tests {
 
         assert_eq!(repo.hooks_path_config().as_deref(), Some("dev-hooks"));
         assert_eq!(repo.effective_hooks_dir(), repo.root.join("dev-hooks"));
+    }
+
+    #[test]
+    fn test_hooks_path_config_expands_tilde() {
+        // A `~`-prefixed hooksPath must be expanded to an absolute path by Git
+        // (`--type=path`), not treated as the repo-relative directory `<root>/~/...`.
+        let (_dir, repo) = make_test_repo();
+        run_cmd(
+            &repo.root,
+            "git",
+            &["config", "core.hooksPath", "~/git-shadow-test-hooks"],
+        );
+
+        // HOME governs `~` expansion on Unix; skip if the runner has none.
+        if std::env::var_os("HOME").is_none() {
+            return;
+        }
+
+        let resolved = repo
+            .hooks_path_config()
+            .expect("hooksPath should be reported when set");
+        assert!(
+            !resolved.starts_with('~'),
+            "tilde should be expanded, got: {resolved}"
+        );
+        assert!(
+            PathBuf::from(&resolved).is_absolute(),
+            "expanded hooksPath should be absolute, got: {resolved}"
+        );
+        assert!(
+            resolved.ends_with("git-shadow-test-hooks"),
+            "expanded hooksPath should keep the suffix, got: {resolved}"
+        );
+
+        // effective_hooks_dir must use the expanded absolute path verbatim, not join it
+        // onto the repo root.
+        assert_eq!(repo.effective_hooks_dir(), PathBuf::from(&resolved));
     }
 
     #[test]

@@ -159,6 +159,17 @@ pub fn uninstall_forced_overlays(locale: UiLocale, count: usize) -> String {
     }
 }
 
+pub fn uninstall_overlay_baseline_missing(locale: UiLocale, path: &str) -> String {
+    match locale {
+        UiLocale::Ja => {
+            format!("{path} の baseline が見つからないため working tree への復元をスキップしました")
+        }
+        UiLocale::En => {
+            format!("skipped restoring {path}: its baseline file is missing")
+        }
+    }
+}
+
 pub fn inherited_from_main_worktree(locale: UiLocale, count: usize) -> String {
     match locale {
         UiLocale::Ja => format!("main worktree から {count} 件のファイル設定を引き継ぎました"),

@@ -54,18 +54,25 @@ pub fn run(file: &str, force: bool) -> Result<()> {
 
     config.remove(&normalized)?;
 
-    // Regenerate the shared exclude section from the union of all worktrees' configs.
-    // This keeps entries that other worktrees still rely on (config is per-worktree but
-    // .git/info/exclude is shared), and only drops the removed entry if no worktree needs
-    // it anymore.
-    let manager = ExcludeManager::new(&git.common_dir);
-    let patterns = crate::exclude::union_patterns(&git, &config);
-    manager.set_entries(&patterns)?;
+    regenerate_exclude(&git, &config)?;
 
     config.save(&git.shadow_dir)?;
 
     println!("{}", ui::unregistered(locale, &normalized).green());
 
+    Ok(())
+}
+
+/// Regenerate the shared `.git/info/exclude` managed section from the union of all
+/// worktrees' configs.
+///
+/// This keeps entries that other worktrees still rely on (config is per-worktree but
+/// `.git/info/exclude` is shared via `common_dir`), and only drops the removed entry if
+/// no worktree needs it anymore.
+fn regenerate_exclude(git: &GitRepo, config: &ShadowConfig) -> Result<()> {
+    let manager = ExcludeManager::new(&git.common_dir);
+    let patterns = crate::exclude::union_patterns(git, config);
+    manager.set_entries(&patterns)?;
     Ok(())
 }
 
@@ -163,29 +170,32 @@ mod tests {
         let (_dir, git) = make_test_repo();
         let mut config = ShadowConfig::new();
 
-        // Create phantom file
+        // Create phantom file and register it, seeding the exclude section via the real
+        // anchored path (mirrors add.rs).
         std::fs::write(git.root.join("local.md"), "# Local\n").unwrap();
         config
             .add_phantom("local.md".to_string(), ExcludeMode::GitInfoExclude, false)
             .unwrap();
-
-        // Add to exclude
-        let manager = ExcludeManager::new(&git.common_dir);
-        manager.add_entry("local.md").unwrap();
-
         config.save(&git.shadow_dir).unwrap();
+        super::regenerate_exclude(&git, &config).unwrap();
 
-        // Remove phantom
-        remove_phantom_for_test(&git, "local.md", &ExcludeMode::GitInfoExclude, false);
+        let manager = ExcludeManager::new(&git.common_dir);
+        assert!(manager
+            .list_entries()
+            .unwrap()
+            .contains(&"/local.md".to_string()));
+
+        // Remove phantom via the real path.
+        remove_phantom_for_test(&git, &mut config, "local.md");
 
         // File should still exist
         assert!(git.root.join("local.md").exists());
         let content = std::fs::read_to_string(git.root.join("local.md")).unwrap();
         assert_eq!(content, "# Local\n");
 
-        // Exclude entry should be removed
+        // Anchored exclude entry should be removed
         let entries = manager.list_entries().unwrap();
-        assert!(!entries.contains(&"local.md".to_string()));
+        assert!(!entries.contains(&"/local.md".to_string()));
     }
 
     #[test]
@@ -199,8 +209,8 @@ mod tests {
             .unwrap();
         config.save(&git.shadow_dir).unwrap();
 
-        // Remove phantom with no-exclude mode
-        remove_phantom_for_test(&git, "local.md", &ExcludeMode::None, false);
+        // Remove phantom (ExcludeMode::None -> nothing to add/drop in exclude)
+        remove_phantom_for_test(&git, &mut config, "local.md");
 
         // Should not error - file still exists
         assert!(git.root.join("local.md").exists());
@@ -303,22 +313,12 @@ mod tests {
         }
     }
 
-    /// Helper to remove phantom (bypasses prompt)
-    fn remove_phantom_for_test(
-        git: &GitRepo,
-        file_path: &str,
-        exclude_mode: &ExcludeMode,
-        is_directory: bool,
-    ) {
-        if *exclude_mode == ExcludeMode::GitInfoExclude {
-            let exclude_path = if is_directory {
-                format!("{}/", file_path)
-            } else {
-                file_path.to_string()
-            };
-            let manager = ExcludeManager::new(&git.common_dir);
-            manager.remove_entry(&exclude_path).unwrap();
-        }
+    /// Helper to remove a phantom via the SAME path as `run()`: drop it from the config
+    /// and regenerate the shared exclude section from the union of worktrees' configs
+    /// (`union_patterns` + `set_entries`). Bypasses only the TTY prompt.
+    fn remove_phantom_for_test(git: &GitRepo, config: &mut ShadowConfig, file_path: &str) {
+        config.remove(file_path).unwrap();
+        super::regenerate_exclude(git, config).unwrap();
     }
 
     #[test]
@@ -326,27 +326,30 @@ mod tests {
         let (_dir, git) = make_test_repo();
         let mut config = ShadowConfig::new();
 
-        // Create directory phantom
+        // Create directory phantom and register it, seeding the exclude via the real path.
         std::fs::create_dir_all(git.root.join(".claude")).unwrap();
         std::fs::write(git.root.join(".claude/settings.json"), "{}").unwrap();
-
-        // Add exclude entry with trailing slash (as add_phantom would)
-        let manager = ExcludeManager::new(&git.common_dir);
-        manager.add_entry(".claude/").unwrap();
 
         config
             .add_phantom(".claude".to_string(), ExcludeMode::GitInfoExclude, true)
             .unwrap();
         config.save(&git.shadow_dir).unwrap();
+        super::regenerate_exclude(&git, &config).unwrap();
 
-        // Remove phantom directory
-        remove_phantom_for_test(&git, ".claude", &ExcludeMode::GitInfoExclude, true);
+        let manager = ExcludeManager::new(&git.common_dir);
+        assert!(manager
+            .list_entries()
+            .unwrap()
+            .contains(&"/.claude/".to_string()));
 
-        // Exclude entry should be removed
+        // Remove phantom directory via the real path
+        remove_phantom_for_test(&git, &mut config, ".claude");
+
+        // Anchored directory exclude entry should be removed
         let entries = manager.list_entries().unwrap();
         assert!(
-            !entries.contains(&".claude/".to_string()),
-            "Exclude entry with trailing slash should be removed, got: {:?}",
+            !entries.contains(&"/.claude/".to_string()),
+            "Anchored directory exclude entry should be removed, got: {:?}",
             entries
         );
 
@@ -356,18 +359,33 @@ mod tests {
     }
 
     #[test]
-    fn test_remove_phantom_file_removes_exclude_without_trailing_slash() {
+    fn test_remove_drops_anchored_entry_when_last_worktree_unregisters() {
         let (_dir, git) = make_test_repo();
+        let mut config = ShadowConfig::new();
 
-        // Add file exclude entry (no trailing slash)
+        // Register a phantom file and seed the exclude section via the real anchored path.
+        std::fs::write(git.root.join("local.md"), "# Local\n").unwrap();
+        config
+            .add_phantom("local.md".to_string(), ExcludeMode::GitInfoExclude, false)
+            .unwrap();
+        config.save(&git.shadow_dir).unwrap();
+        super::regenerate_exclude(&git, &config).unwrap();
+
         let manager = ExcludeManager::new(&git.common_dir);
-        manager.add_entry("local.md").unwrap();
+        assert!(manager
+            .list_entries()
+            .unwrap()
+            .contains(&"/local.md".to_string()));
 
-        // Remove phantom file
-        remove_phantom_for_test(&git, "local.md", &ExcludeMode::GitInfoExclude, false);
+        // This is the only worktree, so unregistering drops the shared anchored entry.
+        remove_phantom_for_test(&git, &mut config, "local.md");
 
         let entries = manager.list_entries().unwrap();
-        assert!(!entries.contains(&"local.md".to_string()));
+        assert!(
+            !entries.contains(&"/local.md".to_string()),
+            "anchored entry should be dropped when the last worktree unregisters it, got: {:?}",
+            entries
+        );
     }
 
     #[test]

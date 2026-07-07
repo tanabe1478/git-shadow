@@ -5,7 +5,7 @@ use crate::config::{FileType, ShadowConfig};
 use crate::error::ShadowError;
 use crate::exclude::{self, ExcludeManager};
 use crate::git::GitRepo;
-use crate::lock::{self, LockStatus};
+use crate::lock;
 use crate::path;
 use crate::ui;
 
@@ -16,8 +16,8 @@ pub fn run(force: bool) -> Result<()> {
     let git = GitRepo::discover(&std::env::current_dir()?)?;
     let config = ShadowConfig::load(&git.shadow_dir)?;
 
-    // Refuse while a commit is in progress: leftover stash or a live lock means
-    // pre-commit ran but post-commit has not, so wiping state would lose work.
+    // Refuse while a commit is in progress: a leftover stash means pre-commit ran but
+    // post-commit has not, so wiping state would lose work.
     guard_commit_in_progress(&git)?;
 
     // Refuse if files are still managed, unless --force restores overlays and wipes.
@@ -25,10 +25,23 @@ pub fn run(force: bool) -> Result<()> {
         return Err(ShadowError::UninstallHasEntries(config.files.len()).into());
     }
 
+    // Hold the shadow lock across every mutation below (overlay restore, hook removal,
+    // exclude rewrite, shadow_dir deletion). The pre-commit hook acquires this same lock,
+    // so this closes the window where a commit could start between the guard above and
+    // the wipe. A live holder means a commit is mid-flight -> refuse; a stale/corrupt
+    // lock has no live owner and nothing worth preserving during uninstall, so reclaim
+    // it. The lock lives inside shadow_dir, so the final remove_dir_all(&shadow_dir)
+    // deletes the lock file, which is how the lock is released. Skip locking entirely
+    // when shadow_dir is absent (nothing racy to protect).
+    let holding_lock = git.shadow_dir.exists();
+    if holding_lock {
+        acquire_uninstall_lock(&git)?;
+    }
+
     // --force: restore overlay baselines to the working tree; phantom files are left
     // untouched on disk (they are the user's local-only files).
     if force {
-        let restored = restore_overlays(&git, &config)?;
+        let restored = restore_overlays(&git, &config, locale)?;
         if restored > 0 {
             println!(
                 "{}",
@@ -48,7 +61,9 @@ pub fn run(force: bool) -> Result<()> {
     let patterns = exclude::union_patterns(&git, &ShadowConfig::new());
     manager.set_entries(&patterns)?;
 
-    // Remove this worktree's shadow state (git_dir-based, per-worktree).
+    // Remove this worktree's shadow state (git_dir-based, per-worktree). This also
+    // deletes the lock file acquired above, releasing the lock now that there is no
+    // remaining state to protect.
     if git.shadow_dir.exists() {
         std::fs::remove_dir_all(&git.shadow_dir)
             .with_context(|| format!("failed to remove {}", git.shadow_dir.display()))?;
@@ -58,7 +73,11 @@ pub fn run(force: bool) -> Result<()> {
     Ok(())
 }
 
-/// Block uninstall when a commit cycle appears to be mid-flight.
+/// Block uninstall when a stash remnant indicates an interrupted commit cycle
+/// (pre-commit ran, post-commit did not), so wiping state would lose stashed work.
+///
+/// The live-commit race is handled separately by holding the shadow lock through the
+/// mutations (see [`acquire_uninstall_lock`]); this guard only covers the stash.
 fn guard_commit_in_progress(git: &GitRepo) -> Result<()> {
     let stash_dir = git.shadow_dir.join("stash");
     if stash_dir.exists() {
@@ -75,19 +94,31 @@ fn guard_commit_in_progress(git: &GitRepo) -> Result<()> {
         }
     }
 
-    if let Ok(LockStatus::HeldByOther(info)) = lock::check_lock(&git.shadow_dir) {
-        return Err(ShadowError::LockHeld {
-            pid: info.pid,
-            timestamp: info.timestamp.to_rfc3339(),
-        }
-        .into());
-    }
-
     Ok(())
 }
 
+/// Acquire the shadow lock for the uninstall and hold it across the subsequent
+/// mutations. Refuses with `LockHeld` when a live process holds it (a commit is in
+/// progress); a stale (dead PID) or corrupt lock has no live owner, so it is reclaimed.
+fn acquire_uninstall_lock(git: &GitRepo) -> Result<()> {
+    match lock::acquire_lock(&git.shadow_dir) {
+        Ok(()) => Ok(()),
+        Err(ShadowError::LockHeld { pid, timestamp }) => {
+            Err(ShadowError::LockHeld { pid, timestamp }.into())
+        }
+        Err(ShadowError::StaleLock(_) | ShadowError::CorruptLock) => {
+            lock::release_lock(&git.shadow_dir)?;
+            lock::acquire_lock(&git.shadow_dir).map_err(Into::into)
+        }
+        Err(e) => Err(e.into()),
+    }
+}
+
 /// Restore overlay baselines to the working tree. Returns the number restored.
-fn restore_overlays(git: &GitRepo, config: &ShadowConfig) -> Result<usize> {
+///
+/// An overlay whose baseline file is missing cannot be restored; warn per skipped file
+/// so the user knows their working tree still carries shadow changes for it.
+fn restore_overlays(git: &GitRepo, config: &ShadowConfig, locale: ui::UiLocale) -> Result<usize> {
     let mut restored = 0;
     for (file_path, entry) in &config.files {
         if entry.file_type != FileType::Overlay {
@@ -101,6 +132,11 @@ fn restore_overlays(git: &GitRepo, config: &ShadowConfig) -> Result<usize> {
             std::fs::write(&worktree_path, &baseline)
                 .with_context(|| format!("failed to restore baseline to {}", file_path))?;
             restored += 1;
+        } else {
+            eprintln!(
+                "{}",
+                ui::uninstall_overlay_baseline_missing(locale, file_path).yellow()
+            );
         }
     }
     Ok(restored)
@@ -246,12 +282,79 @@ mod tests {
         // Local shadow edit in the working tree.
         std::fs::write(git.root.join("CLAUDE.md"), "# Team\n# shadow\n").unwrap();
 
-        let restored = restore_overlays(&git, &config).unwrap();
+        let restored = restore_overlays(&git, &config, ui::UiLocale::En).unwrap();
         assert_eq!(restored, 1);
         assert_eq!(
             std::fs::read_to_string(git.root.join("CLAUDE.md")).unwrap(),
             "# Team\n"
         );
+    }
+
+    #[test]
+    fn test_restore_overlays_skips_missing_baseline() {
+        let (_dir, git) = make_test_repo();
+        let mut config = ShadowConfig::new();
+        let commit = git.head_commit().unwrap();
+        // Overlay registered, but NO baseline file was ever written.
+        config.add_overlay("CLAUDE.md".to_string(), commit).unwrap();
+
+        std::fs::write(git.root.join("CLAUDE.md"), "# Team\n# shadow\n").unwrap();
+
+        // Nothing to restore; the working tree keeps its shadow content and the count is 0.
+        let restored = restore_overlays(&git, &config, ui::UiLocale::En).unwrap();
+        assert_eq!(restored, 0);
+        assert_eq!(
+            std::fs::read_to_string(git.root.join("CLAUDE.md")).unwrap(),
+            "# Team\n# shadow\n"
+        );
+    }
+
+    #[test]
+    fn test_acquire_uninstall_lock_refuses_when_held_live() {
+        let (_dir, git) = make_test_repo();
+
+        // Live lock held by a real, signalable child process.
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        let lock_content = format!(
+            "pid={}\ntimestamp={}",
+            child.id(),
+            chrono::Utc::now().to_rfc3339()
+        );
+        std::fs::write(git.shadow_dir.join("lock"), &lock_content).unwrap();
+
+        let result = acquire_uninstall_lock(&git);
+        let lock_after = std::fs::read_to_string(git.shadow_dir.join("lock")).unwrap();
+        let _ = child.kill();
+        let _ = child.wait();
+
+        assert!(matches!(
+            result.unwrap_err().downcast_ref::<ShadowError>(),
+            Some(ShadowError::LockHeld { .. })
+        ));
+        // The live holder's lock must be left untouched.
+        assert_eq!(lock_after, lock_content);
+    }
+
+    #[test]
+    fn test_acquire_uninstall_lock_reclaims_stale_lock() {
+        let (_dir, git) = make_test_repo();
+        // Stale lock: PID that cannot exist.
+        std::fs::write(
+            git.shadow_dir.join("lock"),
+            format!("pid=999999\ntimestamp={}", chrono::Utc::now().to_rfc3339()),
+        )
+        .unwrap();
+
+        acquire_uninstall_lock(&git).unwrap();
+
+        // After reclaiming, the lock is now held by us.
+        assert!(matches!(
+            lock::check_lock(&git.shadow_dir).unwrap(),
+            lock::LockStatus::HeldByUs
+        ));
     }
 
     #[test]

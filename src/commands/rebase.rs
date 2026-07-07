@@ -203,7 +203,14 @@ pub fn auto_rebase_all(git: &GitRepo, trigger: &str) -> Result<()> {
         Err(e) => return Err(e.into()),
     }
 
-    let result = auto_rebase_all_locked(git, config, trigger);
+    // Reload config now that we hold the lock. The load above was only a cheap
+    // short-circuit; another git-shadow process could have mutated config.json between
+    // that load and lock acquisition, so act on a fresh, lock-protected snapshot. Wrap
+    // the reload + work so the lock is released even if the reload itself fails.
+    let result = (|| {
+        let config = ShadowConfig::load(&git.shadow_dir)?;
+        auto_rebase_all_locked(git, config, trigger)
+    })();
     lock::release_lock(&git.shadow_dir).ok();
     result
 }
