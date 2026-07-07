@@ -80,6 +80,24 @@ pub enum Commands {
         file: Option<String>,
     },
 
+    /// Export git-shadow state to a portable archive
+    Export {
+        /// Output archive path (default: git-shadow-export.tar.gz)
+        output: Option<String>,
+        /// Overwrite the output file if it already exists
+        #[arg(long)]
+        force: bool,
+    },
+
+    /// Import git-shadow state from a portable archive
+    Import {
+        /// Path to the archive to import
+        archive: String,
+        /// Overwrite conflicting files and replace differing entries
+        #[arg(long)]
+        force: bool,
+    },
+
     /// Suspend shadow changes for branch switching
     Suspend,
 
@@ -249,6 +267,42 @@ fn localize_subcommands(command: clap::Command, locale: UiLocale) -> clap::Comma
             arg.help(match locale {
                 UiLocale::Ja => "対象ファイルのパス (省略時は全件)",
                 UiLocale::En => "Target file path (omit for all files)",
+            })
+        })
+    });
+    let command = command.mut_subcommand("export", |sub| {
+        sub.about(match locale {
+            UiLocale::Ja => "git-shadow の state をポータブルな archive に export する",
+            UiLocale::En => "Export git-shadow state to a portable archive",
+        })
+        .mut_arg("output", |arg| {
+            arg.help(match locale {
+                UiLocale::Ja => "出力先の archive パス (既定: git-shadow-export.tar.gz)",
+                UiLocale::En => "Output archive path (default: git-shadow-export.tar.gz)",
+            })
+        })
+        .mut_arg("force", |arg| {
+            arg.help(match locale {
+                UiLocale::Ja => "出力先が既に存在しても上書きする",
+                UiLocale::En => "Overwrite the output file if it already exists",
+            })
+        })
+    });
+    let command = command.mut_subcommand("import", |sub| {
+        sub.about(match locale {
+            UiLocale::Ja => "ポータブルな archive から git-shadow の state を import する",
+            UiLocale::En => "Import git-shadow state from a portable archive",
+        })
+        .mut_arg("archive", |arg| {
+            arg.help(match locale {
+                UiLocale::Ja => "import する archive のパス",
+                UiLocale::En => "Path to the archive to import",
+            })
+        })
+        .mut_arg("force", |arg| {
+            arg.help(match locale {
+                UiLocale::Ja => "衝突するファイルを上書きし、異なる登録を置き換える",
+                UiLocale::En => "Overwrite conflicting files and replace differing entries",
             })
         })
     });

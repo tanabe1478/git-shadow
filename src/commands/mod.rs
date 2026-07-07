@@ -1,7 +1,9 @@
 pub mod add;
 pub mod diff;
 pub mod doctor;
+pub mod export;
 pub mod hook;
+pub mod import;
 pub mod install;
 pub mod rebase;
 pub mod remove;
