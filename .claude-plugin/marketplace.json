@@ -1,0 +1,14 @@
+{
+  "name": "git-shadow",
+  "description": "Marketplace for the git-shadow Claude Code plugin.",
+  "owner": {
+    "name": "tanabe1478"
+  },
+  "plugins": [
+    {
+      "name": "git-shadow",
+      "source": "./",
+      "description": "Skill for driving the git-shadow CLI: manage local-only Git changes (overlay/phantom/phantom dir), keep personal edits out of commits, and migrate state across machines via export/import."
+    }
+  ]
+}
