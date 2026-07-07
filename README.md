@@ -112,6 +112,26 @@ All data is stored in `.git/shadow/` — inside `.git/`, so it's never committed
 - `git status` itself is not replaced by default. Use `git shadow status --git` if you want an opt-in combined view.
 - Git does not provide a general pre-`add` hook, so early warnings for overlay files happen in `git-shadow status` and at commit time, not during `git add`.
 
+## Claude Code Plugin
+
+This repo ships a [Claude Code](https://code.claude.com) skill so an AI coding
+agent can drive `git-shadow` correctly (see [`skills/git-shadow/SKILL.md`](skills/git-shadow/SKILL.md)).
+The repo is itself a plugin marketplace.
+
+**Install via the marketplace (recommended):**
+
+```text
+/plugin marketplace add tanabe1478/git-shadow
+/plugin install git-shadow@git-shadow
+```
+
+**Fallback for non-plugin setups** — copy or symlink the skill into your personal
+skills directory:
+
+```bash
+ln -s "$(pwd)/skills/git-shadow" ~/.claude/skills/git-shadow   # or: cp -r skills/git-shadow ~/.claude/skills/git-shadow
+```
+
 ## Documentation
 
 - [Detailed Usage Guide](docs/usage.md) | [日本語](docs/usage.ja.md)

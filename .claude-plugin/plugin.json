@@ -1,0 +1,12 @@
+{
+  "name": "git-shadow",
+  "description": "Skill for driving the git-shadow CLI: manage local-only Git changes (overlay/phantom/phantom dir), keep personal config and debug edits out of commits, and migrate that state to a new machine via export/import.",
+  "version": "0.1.0",
+  "author": {
+    "name": "tanabe1478"
+  },
+  "homepage": "https://github.com/tanabe1478/git-shadow",
+  "repository": "https://github.com/tanabe1478/git-shadow",
+  "license": "MIT",
+  "keywords": ["git", "git-shadow", "local-only", "overlay", "phantom", "workflow"]
+}

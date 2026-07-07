@@ -70,6 +70,8 @@ tests/
   test_git_operations.rs  # E2E: amend, rebase, merge, cherry-pick, pathspec, live-lock
   test_localized_errors.rs # E2E: locale-aware messages, --version, --json, uninstall
   test_export_import.rs   # E2E: export/import roundtrip, merge, conflict, binary, idempotency
+skills/git-shadow/       # Claude Code skill (SKILL.md) for AI agents driving the CLI
+.claude-plugin/          # Plugin manifest (plugin.json) + marketplace catalog (marketplace.json)
 ```
 
 ### Path Encoding
