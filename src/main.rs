@@ -34,6 +34,7 @@ fn run() -> anyhow::Result<()> {
         Commands::Resume => commands::resume::run()?,
         Commands::Doctor { json } => commands::doctor::run(json)?,
         Commands::Hook { hook_name } => commands::hook::run(&hook_name)?,
+        Commands::Filter { command } => commands::filter::run(&command)?,
     }
 
     Ok(())

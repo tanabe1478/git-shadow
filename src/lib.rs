@@ -5,6 +5,7 @@ pub mod config;
 pub mod diff_util;
 pub mod error;
 pub mod exclude;
+pub mod filter_state;
 pub mod fs_util;
 pub mod git;
 pub mod hooks;

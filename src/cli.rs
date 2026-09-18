@@ -117,6 +117,70 @@ pub enum Commands {
         /// Hook name (pre-commit, post-commit, post-merge, post-rewrite)
         hook_name: String,
     },
+
+    /// Experimental clean/smudge filter backend (prototype)
+    Filter {
+        #[command(subcommand)]
+        command: FilterCommands,
+    },
+}
+
+/// Subcommands for the experimental clean/smudge filter backend.
+#[derive(Subcommand)]
+pub enum FilterCommands {
+    /// Install the filter driver (config + info/attributes section)
+    Install,
+
+    /// Remove the filter driver and this worktree's filter state
+    Uninstall {
+        /// Remove even while files are still managed
+        #[arg(long)]
+        force: bool,
+    },
+
+    /// Register a tracked file: baseline B := HEAD, overlay L := worktree
+    Add {
+        /// Target file paths
+        files: Vec<String>,
+        /// Ignore file size limit
+        #[arg(long)]
+        force: bool,
+    },
+
+    /// Unregister a file (worktree keeps its current content)
+    Remove {
+        /// Target file path
+        file: String,
+    },
+
+    /// Show filter-managed files: would-commit diff vs overlay diff
+    Status,
+
+    /// Re-snapshot the overlay: L := current worktree content
+    Sync {
+        /// Target file path
+        file: String,
+    },
+
+    /// Resolve a pending smudge conflict using the edited worktree content
+    Resolve {
+        /// Target file path
+        file: String,
+    },
+
+    /// Clean filter entry point (invoked by Git)
+    #[command(hide = true)]
+    Clean {
+        /// Path passed via %f
+        file: String,
+    },
+
+    /// Smudge filter entry point (invoked by Git)
+    #[command(hide = true)]
+    Smudge {
+        /// Path passed via %f
+        file: String,
+    },
 }
 
 impl Cli {
@@ -316,6 +380,12 @@ fn localize_subcommands(command: clap::Command, locale: UiLocale) -> clap::Comma
         sub.about(match locale {
             UiLocale::Ja => "suspend された shadow changes を復元する",
             UiLocale::En => "Resume suspended shadow changes",
+        })
+    });
+    let command = command.mut_subcommand("filter", |sub| {
+        sub.about(match locale {
+            UiLocale::Ja => "実験的 clean/smudge フィルタバックエンド (prototype)",
+            UiLocale::En => "Experimental clean/smudge filter backend (prototype)",
         })
     });
     command.mut_subcommand("doctor", |sub| {
