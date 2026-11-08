@@ -42,7 +42,7 @@ Four scenarios covering git worktree support:
 
 ## E2E Tests (test_git_operations.rs)
 
-Six scenarios that install the real hooks and run real `git` commands (the built binary is put on `PATH`):
+Eight scenarios that install the real hooks and run real `git` commands (the built binary is put on `PATH`):
 
 1. **`test_amend_keeps_shadow_out_of_commit_and_intact_in_worktree`**: `git commit --amend` keeps shadow out of history and intact in the working tree
 2. **`test_rebase_triggers_post_rewrite_and_preserves_shadow`**: `git rebase` fires post-rewrite and preserves shadow
@@ -50,6 +50,8 @@ Six scenarios that install the real hooks and run real `git` commands (the built
 4. **`test_cherry_pick_does_not_leak_shadow`**: `git cherry-pick` does not leak shadow content into the picked commit
 5. **`test_pathspec_commit_isolates_shadow`**: a pathspec-limited commit still isolates shadow
 6. **`test_commit_blocked_by_live_lock_holder`**: a live lock holder blocks the commit rather than corrupting state
+7. **`test_shared_hooks_path_does_not_block_repositories_without_install`**: with `core.hooksPath` in the global config (isolated via `GIT_CONFIG_GLOBAL`), a repository that never ran `install` commits normally while the installed one still strips shadow
+8. **`test_install_warns_when_hooks_path_comes_from_global_config`**: `install` warns when `core.hooksPath` comes from the global config, but not for a repository-local one
 
 ## E2E Tests (test_localized_errors.rs)
 

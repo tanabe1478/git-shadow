@@ -29,6 +29,8 @@ git-shadow install
 既存の hook がある場合は `<hook>.pre-shadow` にリネームされ、git-shadow の処理後にチェーン実行されます。
 
 > **`core.hooksPath`**: リポジトリで `core.hooksPath`（Husky、lefthook、独自の `dev-hooks/` など）が設定されている場合、`install` は hooks を実際に発火する有効なディレクトリに配置し、`note: core.hooksPath (.husky) is set, so hooks were installed into <path>` のようなメッセージを表示します。既定のディレクトリに hooks があるのに `core.hooksPath` が別を指している（＝発火せず黙って無視される）場合、`git-shadow doctor` が issue として報告します。
+>
+> `core.hooksPath` が global または system の git config（`~/.gitconfig` など）で設定されている場合、その hooks ディレクトリはマシン上のすべてのリポジトリで共有されるため、`install` は警告を表示します。`git-shadow install` していないリポジトリ（およびワークツリー）では hooks は何もしないので、そこでのコミットには影響しません。
 
 > **worktree**: `git worktree` を使用している場合は、各ワークツリーで `git-shadow install` を個別に実行してください。メインリポジトリに shadow 管理対象ファイルがある場合、`install` 時に自動的にファイルリストが継承されます（overlay のベースラインはワークツリーの HEAD から再生成、phantom エントリはそのままコピー）。詳細は [git worktree 対応](#git-worktree-対応) を参照してください。
 

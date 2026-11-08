@@ -1,6 +1,7 @@
 use std::os::unix::fs::PermissionsExt;
 
 use anyhow::{Context, Result};
+use colored::Colorize;
 
 use crate::config::{FileType, ShadowConfig};
 use crate::git::GitRepo;
@@ -81,6 +82,16 @@ pub fn run() -> Result<()> {
             "{}",
             ui::install_custom_hooks_path(locale, &hooks_path, &hooks_dir.display().to_string())
         );
+        if let Some(scope) = git
+            .hooks_path_scope()
+            .filter(|scope| scope == "global" || scope == "system")
+        {
+            println!(
+                "{}",
+                ui::install_shared_hooks_path(locale, &scope, &hooks_dir.display().to_string())
+                    .yellow()
+            );
+        }
     }
 
     println!("{}", ui::install_success(locale));
