@@ -151,6 +151,27 @@ impl GitRepo {
         }
     }
 
+    /// Report which config scope (`local`, `worktree`, `global`, `system`, `command`)
+    /// `core.hooksPath` comes from.
+    ///
+    /// Returns `None` when it is unset or the scope cannot be determined
+    /// (`--show-scope` requires Git 2.26+).
+    pub fn hooks_path_scope(&self) -> Option<String> {
+        let output = Command::new("git")
+            .args(["config", "--show-scope", "--get", "core.hooksPath"])
+            .current_dir(&self.root)
+            .output()
+            .ok()?;
+
+        if !output.status.success() {
+            return None;
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let (scope, _) = stdout.trim_end().split_once('\t')?;
+        Some(scope.to_string())
+    }
+
     /// Resolve the effective hooks directory Git will run hooks from.
     ///
     /// When `core.hooksPath` is set (e.g. by husky, lefthook, or this repo's own

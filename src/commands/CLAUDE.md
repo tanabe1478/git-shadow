@@ -73,7 +73,7 @@ Restores suspended shadow changes. If baseline is unchanged, restores directly. 
 
 ### hook.rs: Hidden Command
 
-The `hook` subcommand is `#[command(hide = true)]` in clap -- it doesn't appear in `--help`. It's only called by the hook scripts installed by `install`. It discovers the repo from `cwd`, so it works correctly in worktrees.
+The `hook` subcommand is `#[command(hide = true)]` in clap -- it doesn't appear in `--help`. It's only called by the hook scripts installed by `install`. It discovers the repo from `cwd`, so it works correctly in worktrees. If the discovered `shadow_dir` does not exist (git-shadow was never installed in this repository or worktree, but the hooks directory is shared, e.g. via a global `core.hooksPath`), it returns success without doing anything.
 
 ### doctor.rs: Diagnostic Categories
 

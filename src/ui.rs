@@ -135,6 +135,17 @@ pub fn install_custom_hooks_path(locale: UiLocale, hooks_path: &str, resolved: &
     }
 }
 
+pub fn install_shared_hooks_path(locale: UiLocale, scope: &str, resolved: &str) -> String {
+    match locale {
+        UiLocale::Ja => format!(
+            "warning: core.hooksPath は {scope} の git config で設定されているため、{resolved} の hooks はこのマシンのすべてのリポジトリで動きます。git-shadow install していないリポジトリでは何もしません"
+        ),
+        UiLocale::En => format!(
+            "warning: core.hooksPath comes from your {scope} git config, so the hooks in {resolved} run in every repository on this machine. They do nothing in repositories where git-shadow install has not been run"
+        ),
+    }
+}
+
 pub fn uninstall_success(locale: UiLocale) -> &'static str {
     choose(
         locale,

@@ -500,3 +500,152 @@ fn test_commit_blocked_by_live_lock_holder() {
         "no stash entry should be orphaned by the blocked commit"
     );
 }
+
+// ---------------------------------------------------------------------------
+// g) core.hooksPath shared by several repositories (e.g. set in ~/.gitconfig)
+// ---------------------------------------------------------------------------
+
+/// Run `program` in `root` with `global_config` as the global git config, so
+/// the test controls `core.hooksPath` without touching the user's real config.
+fn run_with_global(program: &str, root: &Path, args: &[&str], global_config: &Path) -> Output {
+    Command::new(program)
+        .args(args)
+        .current_dir(root)
+        .env("PATH", prepend_path(&bin_dir()))
+        .env("LANG", "en_US.UTF-8")
+        .env("GIT_CONFIG_GLOBAL", global_config)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .unwrap()
+}
+
+fn assert_success(out: &Output, what: &str) {
+    assert!(
+        out.status.success(),
+        "{what} failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// A global config whose `core.hooksPath` points at a hooks directory shared by
+/// every repository, plus two fresh repositories under the same temp dir.
+fn setup_shared_hooks_path() -> (tempfile::TempDir, PathBuf, PathBuf, PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let global_config = dir.path().join("gitconfig");
+    let hooks_dir = dir.path().join("global-hooks");
+    std::fs::write(
+        &global_config,
+        format!(
+            "[user]\n\tname = Test User\n\temail = test@example.com\n[core]\n\thooksPath = {}\n",
+            hooks_dir.display()
+        ),
+    )
+    .unwrap();
+
+    let installed = dir.path().join("installed");
+    let other = dir.path().join("other");
+    for repo in [&installed, &other] {
+        std::fs::create_dir_all(repo).unwrap();
+        assert_success(
+            &run_with_global("git", repo, &["init"], &global_config),
+            "git init",
+        );
+    }
+    (dir, global_config, installed, other)
+}
+
+#[test]
+fn test_shared_hooks_path_does_not_block_repositories_without_install() {
+    let (dir, global_config, installed, other) = setup_shared_hooks_path();
+
+    // Installing in one repository writes the hooks into the shared directory.
+    write(&installed, "app.txt", BASE);
+    assert_success(
+        &run_with_global("git", &installed, &["add", "app.txt"], &global_config),
+        "git add",
+    );
+    assert_success(
+        &run_with_global("git", &installed, &["commit", "-m", "init"], &global_config),
+        "initial commit",
+    );
+    assert_success(
+        &run_with_global("git-shadow", &installed, &["install"], &global_config),
+        "git-shadow install",
+    );
+    assert!(dir.path().join("global-hooks/pre-commit").exists());
+
+    // A repository where git-shadow was never installed still commits normally.
+    write(&other, "note.txt", "hello\n");
+    assert_success(
+        &run_with_global("git", &other, &["add", "note.txt"], &global_config),
+        "git add in the other repository",
+    );
+    assert_success(
+        &run_with_global("git", &other, &["commit", "-m", "plain"], &global_config),
+        "commit in a repository without git-shadow install",
+    );
+    assert!(
+        !other.join(".git/shadow").exists(),
+        "hooks must not create shadow state in a repository that never ran install"
+    );
+
+    // The installed repository keeps stripping shadow changes.
+    assert_success(
+        &run_with_global(
+            "git-shadow",
+            &installed,
+            &["add", "app.txt"],
+            &global_config,
+        ),
+        "git-shadow add",
+    );
+    write(&installed, "app.txt", SHADOW);
+    write(&installed, "other.txt", "x\n");
+    assert_success(
+        &run_with_global("git", &installed, &["add", "other.txt"], &global_config),
+        "git add other.txt",
+    );
+    assert_success(
+        &run_with_global(
+            "git",
+            &installed,
+            &["commit", "-m", "second"],
+            &global_config,
+        ),
+        "commit in the installed repository",
+    );
+    assert_eq!(show_head(&installed, "app.txt").as_deref(), Some(BASE));
+    assert_eq!(read(&installed, "app.txt"), SHADOW);
+}
+
+#[test]
+fn test_install_warns_when_hooks_path_comes_from_global_config() {
+    let (_dir, global_config, installed, other) = setup_shared_hooks_path();
+
+    let out = run_with_global("git-shadow", &installed, &["install"], &global_config);
+    assert_success(&out, "git-shadow install");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("global git config") && stdout.contains("every repository"),
+        "install should warn that the hooks are shared by every repository:\n{stdout}"
+    );
+
+    // A repository-local core.hooksPath (husky, lefthook, dev-hooks) is not shared: no warning.
+    assert_success(
+        &run_with_global(
+            "git",
+            &other,
+            &["config", "core.hooksPath", "dev-hooks"],
+            &global_config,
+        ),
+        "git config",
+    );
+    let out = run_with_global("git-shadow", &other, &["install"], &global_config);
+    assert_success(&out, "git-shadow install with a local hooksPath");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !stdout.contains("every repository"),
+        "a repository-local core.hooksPath must not trigger the shared-hooks warning:\n{stdout}"
+    );
+}

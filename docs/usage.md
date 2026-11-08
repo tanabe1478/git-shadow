@@ -29,6 +29,8 @@ This creates:
 If hooks already exist, they are renamed to `<hook>.pre-shadow` and chained after git-shadow's processing.
 
 > **`core.hooksPath`**: If your repository sets `core.hooksPath` (e.g., Husky, lefthook, or a custom `dev-hooks/` directory), `install` places its hooks into that effective directory so they actually run, and prints a note such as `note: core.hooksPath (.husky) is set, so hooks were installed into <path>`. `git-shadow doctor` reports an issue if hooks are installed in the default directory while `core.hooksPath` points elsewhere (they would be inert and silently skipped).
+>
+> If `core.hooksPath` comes from your global or system git config (e.g. `~/.gitconfig`), the hooks directory is shared by every repository on the machine, and `install` prints a warning saying so. The hooks do nothing in repositories (and worktrees) where `git-shadow install` has not been run, so commits there are not affected.
 
 > **Worktrees**: If you use `git worktree`, run `git-shadow install` separately in each worktree. If the main repo already has shadow-managed files, `install` automatically inherits the file list (overlay baselines are regenerated from the worktree's HEAD; phantom entries are copied as-is). See [git worktree Support](#git-worktree-support) for details.
 
